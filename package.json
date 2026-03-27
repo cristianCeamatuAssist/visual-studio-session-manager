@@ -1,0 +1,194 @@
+{
+  "name": "vscode-session-manager",
+  "displayName": "Visual Studio Session Manager",
+  "description": "Monitor and switch between VS Code projects with Claude Code CLI session status indicators",
+  "version": "0.1.0",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/cristianCeamatuAssist/visual-studio-session-manager"
+  },
+  "homepage": "https://github.com/cristianCeamatuAssist/visual-studio-session-manager#readme",
+  "bugs": {
+    "url": "https://github.com/cristianCeamatuAssist/visual-studio-session-manager/issues"
+  },
+  "engines": {
+    "vscode": "^1.74.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "main": "./dist/extension.js",
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "claude-sessions",
+          "title": "Claude Sessions",
+          "icon": "resources/claude-sessions.svg"
+        }
+      ]
+    },
+    "views": {
+      "claude-sessions": [
+        {
+          "id": "claudeSessionsProjects",
+          "name": "Projects"
+        }
+      ]
+    },
+    "commands": [
+      {
+        "command": "claudeSessions.addProject",
+        "title": "Add Project",
+        "icon": "$(add)"
+      },
+      {
+        "command": "claudeSessions.removeProject",
+        "title": "Remove Project",
+        "icon": "$(trash)"
+      },
+      {
+        "command": "claudeSessions.refreshProjects",
+        "title": "Refresh",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "claudeSessions.openProject",
+        "title": "Open Project"
+      },
+      {
+        "command": "claudeSessions.openProjectNewWindow",
+        "title": "Open in New Window",
+        "icon": "$(multiple-windows)"
+      },
+      {
+        "command": "claudeSessions.autoDetectProjects",
+        "title": "Auto-Detect Projects from Claude History",
+        "icon": "$(search)"
+      },
+      {
+        "command": "claudeSessions.renameProject",
+        "title": "Rename Project"
+      },
+      {
+        "command": "claudeSessions.openTerminal",
+        "title": "Open Terminal Here",
+        "icon": "$(terminal)"
+      }
+    ],
+    "menus": {
+      "view/title": [
+        {
+          "command": "claudeSessions.autoDetectProjects",
+          "when": "view == claudeSessionsProjects",
+          "group": "navigation@1"
+        },
+        {
+          "command": "claudeSessions.addProject",
+          "when": "view == claudeSessionsProjects",
+          "group": "navigation@2"
+        },
+        {
+          "command": "claudeSessions.refreshProjects",
+          "when": "view == claudeSessionsProjects",
+          "group": "navigation@3"
+        }
+      ],
+      "view/item/context": [
+        {
+          "command": "claudeSessions.openProjectNewWindow",
+          "when": "view == claudeSessionsProjects && viewItem == project",
+          "group": "inline@1"
+        },
+        {
+          "command": "claudeSessions.openTerminal",
+          "when": "view == claudeSessionsProjects && viewItem == project",
+          "group": "inline@2"
+        },
+        {
+          "command": "claudeSessions.removeProject",
+          "when": "view == claudeSessionsProjects && viewItem == project",
+          "group": "inline@3"
+        },
+        {
+          "command": "claudeSessions.renameProject",
+          "when": "view == claudeSessionsProjects && viewItem == project",
+          "group": "context@1"
+        },
+        {
+          "command": "claudeSessions.removeProject",
+          "when": "view == claudeSessionsProjects && viewItem == project",
+          "group": "context@2"
+        }
+      ]
+    },
+    "viewsWelcome": [
+      {
+        "view": "claudeSessionsProjects",
+        "contents": "No projects added yet.\n[Auto-Detect from Claude History](command:claudeSessions.autoDetectProjects)\n[Add Project Folder](command:claudeSessions.addProject)"
+      }
+    ],
+    "configuration": {
+      "title": "Claude Sessions",
+      "properties": {
+        "claudeSessions.projects": {
+          "type": "array",
+          "default": [],
+          "items": {
+            "type": "object",
+            "properties": {
+              "path": {
+                "type": "string",
+                "description": "Absolute path to the project directory"
+              },
+              "name": {
+                "type": "string",
+                "description": "Custom display name (optional, defaults to folder name)"
+              }
+            },
+            "required": [
+              "path"
+            ]
+          },
+          "description": "List of projects to show in the sidebar"
+        },
+        "claudeSessions.pollingInterval": {
+          "type": "number",
+          "default": 3000,
+          "minimum": 1000,
+          "description": "How often to check Claude session status (ms)"
+        },
+        "claudeSessions.cpuThreshold": {
+          "type": "number",
+          "default": 5,
+          "description": "CPU% above which a Claude session is considered 'active' vs 'waiting'"
+        },
+        "claudeSessions.showStatusBar": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show Claude session count in the status bar"
+        }
+      }
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "node esbuild.mjs --production",
+    "compile": "node esbuild.mjs",
+    "watch": "node esbuild.mjs --watch",
+    "package": "npx @vscode/vsce package --no-dependencies",
+    "lint": "eslint src/",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "@types/vscode": "^1.74.0",
+    "esbuild": "^0.25.0",
+    "typescript": "^5.7.0",
+    "vitest": "^4.1.2"
+  }
+}
