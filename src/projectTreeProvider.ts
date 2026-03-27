@@ -15,6 +15,7 @@ export class ProjectTreeProvider implements vscode.TreeDataProvider<TreeNode>, v
   private projectManager: ProjectManager;
   private hookManager: HookManager;
   private extensionPath: string;
+  private hooksInstalled = false;
 
   constructor(
     detector: ClaudeProcessDetector,
@@ -28,13 +29,17 @@ export class ProjectTreeProvider implements vscode.TreeDataProvider<TreeNode>, v
     this.extensionPath = extensionPath;
   }
 
+  setHooksInstalled(installed: boolean): void {
+    this.hooksInstalled = installed;
+  }
+
   refresh(): void {
     this._onDidChangeTreeData.fire(undefined);
   }
 
-  startPolling(): void {
+  startPolling(intervalOverride?: number): void {
     this.stopPolling();
-    const interval = vscode.workspace
+    const interval = intervalOverride ?? vscode.workspace
       .getConfiguration(CONFIG_SECTION)
       .get<number>("pollingInterval", DEFAULT_POLLING_INTERVAL);
 
@@ -81,7 +86,7 @@ export class ProjectTreeProvider implements vscode.TreeDataProvider<TreeNode>, v
       return [];
     }
 
-    const sessions = await this.detector.detectSessions();
+    const sessions = await this.detector.detectSessions(this.hooksInstalled);
 
     // Get hook markers for accurate status detection
     const hookWaitingMarkers = await this.hookManager.getWaitingMarkers();
@@ -95,7 +100,8 @@ export class ProjectTreeProvider implements vscode.TreeDataProvider<TreeNode>, v
       const { status, sessions: matchingSessions } = this.detector.getStatusForProject(
         config.path,
         sessions,
-        hookWaitingMarkers
+        hookWaitingMarkers,
+        this.hooksInstalled
       );
       return {
         type: "project" as const,
@@ -157,23 +163,34 @@ export class ProjectTreeProvider implements vscode.TreeDataProvider<TreeNode>, v
 
     const item = new vscode.TreeItem(label, vscode.TreeItemCollapsibleState.None);
 
-    const isActive = session.cpuPercent > 5;
-    item.description = isActive
-      ? `Active (CPU: ${session.cpuPercent.toFixed(0)}%) - ${started}`
-      : `Waiting - ${started}`;
+    // In hooks mode, use parent project status. In CPU mode, use CPU threshold.
+    const isActive = this.hooksInstalled
+      ? session.cpuPercent === -1 // -1 means hooks mode, check parent status
+      : session.cpuPercent > 5;
 
+    if (this.hooksInstalled) {
+      item.description = `${started}`;
+    } else {
+      item.description = isActive
+        ? `Working (CPU: ${session.cpuPercent.toFixed(0)}%) - ${started}`
+        : `Needs input - ${started}`;
+    }
+
+    // Yellow = working, Red = needs input (user-centric: red means YOU need to act)
     item.iconPath = new vscode.ThemeIcon(
       isActive ? "pulse" : "watch",
       isActive
-        ? new vscode.ThemeColor("terminal.ansiGreen")
-        : new vscode.ThemeColor("terminal.ansiYellow")
+        ? new vscode.ThemeColor("terminal.ansiYellow")
+        : new vscode.ThemeColor("terminal.ansiRed")
     );
 
     const md = new vscode.MarkdownString();
     md.appendMarkdown(`**Session** \`${session.sessionId.slice(0, 8)}...\`\n\n`);
     md.appendMarkdown(`- **PID:** ${session.pid}\n`);
     md.appendMarkdown(`- **CWD:** \`${session.cwd}\`\n`);
-    md.appendMarkdown(`- **CPU:** ${session.cpuPercent.toFixed(1)}%\n`);
+    if (!this.hooksInstalled) {
+      md.appendMarkdown(`- **CPU:** ${session.cpuPercent.toFixed(1)}%\n`);
+    }
     md.appendMarkdown(`- **Started:** ${started}\n`);
     md.appendMarkdown(`- **Kind:** ${session.kind}\n`);
     if (session.entrypoint) {
@@ -200,13 +217,16 @@ export class ProjectTreeProvider implements vscode.TreeDataProvider<TreeNode>, v
   private getStatusDescription(project: ProjectWithStatus): string {
     switch (project.status) {
       case ClaudeSessionStatus.Active: {
-        const cpu = project.sessions[0]?.cpuPercent?.toFixed(0) ?? "?";
         const countStr = project.sessionCount > 1 ? ` (${project.sessionCount} sessions)` : "";
-        return `Active - CPU: ${cpu}%${countStr}`;
+        if (this.hooksInstalled) {
+          return `Working${countStr}`;
+        }
+        const cpu = project.sessions[0]?.cpuPercent?.toFixed(0) ?? "?";
+        return `Working - CPU: ${cpu}%${countStr}`;
       }
       case ClaudeSessionStatus.Waiting: {
         const countStr = project.sessionCount > 1 ? ` (${project.sessionCount} sessions)` : "";
-        return `Waiting for input${countStr}`;
+        return `Needs input${countStr}`;
       }
       case ClaudeSessionStatus.Inactive:
         return "No session";
