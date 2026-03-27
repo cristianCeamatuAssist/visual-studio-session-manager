@@ -231,6 +231,47 @@ describe("ClaudeProcessDetector", () => {
     });
   });
 
+  describe("detectSessions with hooksInstalled=true", () => {
+    it("returns sessions without calling ps or pgrep", async () => {
+      mockedReaddir.mockResolvedValue(["s1.json"] as unknown as ReturnType<typeof fs.readdir>);
+      mockedReadFile.mockResolvedValue(
+        JSON.stringify({
+          pid: 1001,
+          sessionId: "sess-aaa",
+          cwd: "/Users/test/project",
+          startedAt: Date.now(),
+          kind: "cli",
+        })
+      );
+
+      const sessions = await detector.detectSessions(true);
+      expect(sessions).toHaveLength(1);
+      expect(sessions[0].pid).toBe(1001);
+      expect(sessions[0].cpuPercent).toBe(-1);
+      // exec (ps/pgrep) should NOT be called
+      expect(mockedExec).not.toHaveBeenCalled();
+    });
+
+    it("still filters out sessions with missing fields", async () => {
+      mockedReaddir.mockResolvedValue(["bad.json", "good.json"] as unknown as ReturnType<typeof fs.readdir>);
+      mockedReadFile.mockImplementation(async (filePath) => {
+        const fp = filePath.toString();
+        if (fp.includes("bad.json")) return JSON.stringify({ pid: 123 });
+        return JSON.stringify({
+          pid: 1001,
+          sessionId: "sess-aaa",
+          cwd: "/Users/test/project",
+          startedAt: Date.now(),
+          kind: "cli",
+        });
+      });
+
+      const sessions = await detector.detectSessions(true);
+      expect(sessions).toHaveLength(1);
+      expect(sessions[0].pid).toBe(1001);
+    });
+  });
+
   describe("getStatusForProject", () => {
     const makeSessions = (entries: Array<{ pid: number; cwd: string; cpu: number }>): ClaudeSession[] =>
       entries.map((e) => ({
@@ -350,6 +391,68 @@ describe("ClaudeProcessDetector", () => {
       ]);
       const result = detector.getStatusForProject("/Users/test/project", sessions);
       expect(result.status).toBe(ClaudeSessionStatus.Active);
+    });
+  });
+
+  describe("getStatusForProject with hooksInstalled=true", () => {
+    const makeSessions = (entries: Array<{ pid: number; cwd: string }>): ClaudeSession[] =>
+      entries.map((e) => ({
+        pid: e.pid,
+        sessionId: `sess-${e.pid}`,
+        cwd: e.cwd,
+        startedAt: Date.now(),
+        kind: "cli",
+        cpuPercent: -1,
+      }));
+
+    it("returns Active when sessions exist but no waiting markers", () => {
+      const sessions = makeSessions([{ pid: 1, cwd: "/Users/test/project" }]);
+      const hookMarkers = new Set<string>();
+      const result = detector.getStatusForProject("/Users/test/project", sessions, hookMarkers, true);
+      expect(result.status).toBe(ClaudeSessionStatus.Active);
+    });
+
+    it("returns Waiting when a matching session has a waiting marker", () => {
+      const sessions = makeSessions([{ pid: 1, cwd: "/Users/test/project" }]);
+      const hookMarkers = new Set(["sess-1"]);
+      const result = detector.getStatusForProject("/Users/test/project", sessions, hookMarkers, true);
+      expect(result.status).toBe(ClaudeSessionStatus.Waiting);
+    });
+
+    it("returns Waiting when marker matches PID", () => {
+      const sessions = makeSessions([{ pid: 1, cwd: "/Users/test/project" }]);
+      const hookMarkers = new Set(["1"]);
+      const result = detector.getStatusForProject("/Users/test/project", sessions, hookMarkers, true);
+      expect(result.status).toBe(ClaudeSessionStatus.Waiting);
+    });
+
+    it("returns Active when markers exist but none match these sessions", () => {
+      const sessions = makeSessions([{ pid: 1, cwd: "/Users/test/project" }]);
+      const hookMarkers = new Set(["999"]);
+      const result = detector.getStatusForProject("/Users/test/project", sessions, hookMarkers, true);
+      expect(result.status).toBe(ClaudeSessionStatus.Active);
+    });
+
+    it("returns Inactive when no sessions match project", () => {
+      const sessions = makeSessions([{ pid: 1, cwd: "/other" }]);
+      const hookMarkers = new Set<string>();
+      const result = detector.getStatusForProject("/Users/test/project", sessions, hookMarkers, true);
+      expect(result.status).toBe(ClaudeSessionStatus.Inactive);
+    });
+
+    it("ignores CPU values entirely — does not check threshold", () => {
+      // Even with high CPU, if marker says waiting, it's waiting
+      const sessions: ClaudeSession[] = [{
+        pid: 1,
+        sessionId: "sess-1",
+        cwd: "/Users/test/project",
+        startedAt: Date.now(),
+        kind: "cli",
+        cpuPercent: 50.0, // high CPU but hooks override
+      }];
+      const hookMarkers = new Set(["sess-1"]);
+      const result = detector.getStatusForProject("/Users/test/project", sessions, hookMarkers, true);
+      expect(result.status).toBe(ClaudeSessionStatus.Waiting);
     });
   });
 

@@ -33,11 +33,19 @@ export class ClaudeProcessDetector {
     this.cpuThreshold = threshold;
   }
 
-  async detectSessions(): Promise<ClaudeSession[]> {
+  async detectSessions(hooksInstalled = false): Promise<ClaudeSession[]> {
     const rawSessions = await this.readSessionFiles();
     if (rawSessions.length === 0) {
       this.cpuHistory.clear();
       return [];
+    }
+
+    // Hooks mode: skip all CPU detection, just return sessions with cpuPercent = -1
+    if (hooksInstalled) {
+      return rawSessions.map((s) => ({
+        ...s,
+        cpuPercent: -1,
+      }));
     }
 
     const pids = rawSessions.map((s) => s.pid);
@@ -85,7 +93,8 @@ export class ClaudeProcessDetector {
   getStatusForProject(
     projectPath: string,
     sessions: ClaudeSession[],
-    hookWaitingMarkers?: Set<string>
+    hookWaitingMarkers?: Set<string>,
+    hooksInstalled = false
   ): { status: ClaudeSessionStatus; sessions: ClaudeSession[] } {
     const normalized = projectPath.replace(/\/+$/, "");
     const matching = sessions.filter((s) => {
@@ -98,14 +107,28 @@ export class ClaudeProcessDetector {
     }
 
     const sorted = matching.sort((a, b) => b.cpuPercent - a.cpuPercent);
+
+    // Hooks mode: marker-only status determination, no CPU logic
+    if (hooksInstalled) {
+      const markers = hookWaitingMarkers ?? new Set<string>();
+      const isWaiting = matching.some(
+        (s) =>
+          markers.has(String(s.pid)) ||
+          markers.has(s.sessionId)
+      );
+      return {
+        status: isWaiting ? ClaudeSessionStatus.Waiting : ClaudeSessionStatus.Active,
+        sessions: sorted,
+      };
+    }
+
+    // CPU mode: existing logic unchanged
     const bestCpu = sorted[0].cpuPercent;
 
-    // If any session has CPU above threshold, it's active
     if (bestCpu > this.cpuThreshold) {
       return { status: ClaudeSessionStatus.Active, sessions: sorted };
     }
 
-    // If hooks are installed and we have markers, use them as authoritative signal
     if (hookWaitingMarkers && hookWaitingMarkers.size > 0) {
       const isHookConfirmedWaiting = matching.some(
         (s) =>
@@ -115,15 +138,13 @@ export class ClaudeProcessDetector {
       if (isHookConfirmedWaiting) {
         return { status: ClaudeSessionStatus.Waiting, sessions: sorted };
       }
-      // Hook markers exist but none match these sessions — likely still processing
       return { status: ClaudeSessionStatus.Active, sessions: sorted };
     }
 
-    // No hooks: use debouncing — require consecutive low readings before showing "waiting"
     const isConfirmedWaiting = matching.every((s) => {
       const history = this.cpuHistory.get(s.pid);
       if (!history || history.length < DEBOUNCE_READINGS) {
-        return false; // Not enough data — assume still active
+        return false;
       }
       return history.every((cpu) => cpu <= this.cpuThreshold);
     });
@@ -132,7 +153,6 @@ export class ClaudeProcessDetector {
       return { status: ClaudeSessionStatus.Waiting, sessions: sorted };
     }
 
-    // During debounce period, show as active (benefit of the doubt)
     return { status: ClaudeSessionStatus.Active, sessions: sorted };
   }
 
