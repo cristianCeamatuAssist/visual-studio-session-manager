@@ -41,9 +41,15 @@ MARKER_ID="\${SESSION_ID:-$PPID}"
 if [ -n "$MARKER_ID" ]; then
   case "$ACTION" in
     stop)
+      # Claude finished responding — session is now waiting for input
       touch "$SESSIONS_DIR/$MARKER_PREFIX$MARKER_ID"
       ;;
-    resume)
+    resume|start)
+      # Tool about to run OR user submitted prompt — session is active
+      rm -f "$SESSIONS_DIR/$MARKER_PREFIX$MARKER_ID"
+      ;;
+    end)
+      # Session terminated — clean up marker
       rm -f "$SESSIONS_DIR/$MARKER_PREFIX$MARKER_ID"
       ;;
   esac
@@ -56,10 +62,13 @@ export class HookManager {
     try {
       const content = await fs.readFile(CLAUDE_SETTINGS_PATH, "utf-8");
       const settings: ClaudeSettings = JSON.parse(content);
-      const stopHooks = settings.hooks?.Stop ?? [];
-      return stopHooks.some((h) =>
-        h.hooks?.some((hh) => hh.command.includes(HOOK_IDENTIFIER))
-      );
+      const hookEvents = ["Stop", "PreToolUse", "UserPromptSubmit", "Notification", "SessionEnd"] as const;
+      return hookEvents.some((event) => {
+        const eventHooks = settings.hooks?.[event] ?? [];
+        return eventHooks.some((h) =>
+          h.hooks?.some((hh) => hh.command.includes(HOOK_IDENTIFIER))
+        );
+      });
     } catch {
       return false;
     }
@@ -120,6 +129,60 @@ export class HookManager {
         settings.hooks.PreToolUse = preToolHooks;
       }
 
+      // Add UserPromptSubmit hook (if not already present)
+      const userPromptHooks = settings.hooks.UserPromptSubmit ?? [];
+      const hasUserPromptHook = userPromptHooks.some((h) =>
+        h.hooks?.some((hh) => hh.command.includes(HOOK_IDENTIFIER))
+      );
+      if (!hasUserPromptHook) {
+        userPromptHooks.push({
+          matcher: "",
+          hooks: [
+            {
+              type: "command",
+              command: `${scriptPath} start`,
+            },
+          ],
+        });
+        settings.hooks.UserPromptSubmit = userPromptHooks;
+      }
+
+      // Add Notification hook with idle_prompt matcher (if not already present)
+      const notificationHooks = settings.hooks.Notification ?? [];
+      const hasNotificationHook = notificationHooks.some((h) =>
+        h.hooks?.some((hh) => hh.command.includes(HOOK_IDENTIFIER))
+      );
+      if (!hasNotificationHook) {
+        notificationHooks.push({
+          matcher: "idle_prompt",
+          hooks: [
+            {
+              type: "command",
+              command: `${scriptPath} stop`,
+            },
+          ],
+        });
+        settings.hooks.Notification = notificationHooks;
+      }
+
+      // Add SessionEnd hook (if not already present)
+      const sessionEndHooks = settings.hooks.SessionEnd ?? [];
+      const hasSessionEndHook = sessionEndHooks.some((h) =>
+        h.hooks?.some((hh) => hh.command.includes(HOOK_IDENTIFIER))
+      );
+      if (!hasSessionEndHook) {
+        sessionEndHooks.push({
+          matcher: "",
+          hooks: [
+            {
+              type: "command",
+              command: `${scriptPath} end`,
+            },
+          ],
+        });
+        settings.hooks.SessionEnd = sessionEndHooks;
+      }
+
       await fs.writeFile(
         CLAUDE_SETTINGS_PATH,
         JSON.stringify(settings, null, 2),
@@ -155,6 +218,36 @@ export class HookManager {
           );
           if (settings.hooks.PreToolUse.length === 0) {
             delete settings.hooks.PreToolUse;
+          }
+        }
+
+        // Remove our hooks from UserPromptSubmit
+        if (settings.hooks.UserPromptSubmit) {
+          settings.hooks.UserPromptSubmit = settings.hooks.UserPromptSubmit.filter(
+            (h) => !h.hooks?.some((hh) => hh.command.includes(HOOK_IDENTIFIER))
+          );
+          if (settings.hooks.UserPromptSubmit.length === 0) {
+            delete settings.hooks.UserPromptSubmit;
+          }
+        }
+
+        // Remove our hooks from Notification
+        if (settings.hooks.Notification) {
+          settings.hooks.Notification = settings.hooks.Notification.filter(
+            (h) => !h.hooks?.some((hh) => hh.command.includes(HOOK_IDENTIFIER))
+          );
+          if (settings.hooks.Notification.length === 0) {
+            delete settings.hooks.Notification;
+          }
+        }
+
+        // Remove our hooks from SessionEnd
+        if (settings.hooks.SessionEnd) {
+          settings.hooks.SessionEnd = settings.hooks.SessionEnd.filter(
+            (h) => !h.hooks?.some((hh) => hh.command.includes(HOOK_IDENTIFIER))
+          );
+          if (settings.hooks.SessionEnd.length === 0) {
+            delete settings.hooks.SessionEnd;
           }
         }
 

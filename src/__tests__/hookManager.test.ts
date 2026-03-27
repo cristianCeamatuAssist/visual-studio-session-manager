@@ -65,6 +65,23 @@ describe("HookManager", () => {
       const result = await hookManager.isInstalled();
       expect(result).toBe(true);
     });
+
+    it("returns true when UserPromptSubmit hook is present (even if Stop is missing)", async () => {
+      mockedReadFile.mockResolvedValue(
+        JSON.stringify({
+          hooks: {
+            UserPromptSubmit: [
+              {
+                matcher: "",
+                hooks: [{ type: "command", command: "/path/to/vscode-session-manager-hook.sh start" }],
+              },
+            ],
+          },
+        })
+      );
+      const result = await hookManager.isInstalled();
+      expect(result).toBe(true);
+    });
   });
 
   describe("installHooks", () => {
@@ -111,6 +128,30 @@ describe("HookManager", () => {
       expect(written.otherSetting).toBe(true);
     });
 
+    it("installs all 5 hook events (Stop, PreToolUse, UserPromptSubmit, Notification, SessionEnd)", async () => {
+      mockedReadFile.mockRejectedValue(new Error("ENOENT"));
+      mockedWriteFile.mockResolvedValue(undefined);
+
+      await hookManager.installHooks();
+
+      const settingsCall = mockedWriteFile.mock.calls.find(
+        (call) => call[0]?.toString().includes("settings.json")
+      );
+      expect(settingsCall).toBeDefined();
+      const written = JSON.parse(settingsCall![1] as string);
+      expect(written.hooks.Stop).toHaveLength(1);
+      expect(written.hooks.PreToolUse).toHaveLength(1);
+      expect(written.hooks.UserPromptSubmit).toHaveLength(1);
+      expect(written.hooks.Notification).toHaveLength(1);
+      expect(written.hooks.SessionEnd).toHaveLength(1);
+      expect(written.hooks.Stop[0].hooks[0].command).toContain("stop");
+      expect(written.hooks.PreToolUse[0].hooks[0].command).toContain("resume");
+      expect(written.hooks.UserPromptSubmit[0].hooks[0].command).toContain("start");
+      expect(written.hooks.Notification[0].matcher).toBe("idle_prompt");
+      expect(written.hooks.Notification[0].hooks[0].command).toContain("stop");
+      expect(written.hooks.SessionEnd[0].hooks[0].command).toContain("end");
+    });
+
     it("does not duplicate hooks if already installed", async () => {
       mockedReadFile.mockResolvedValue(
         JSON.stringify({
@@ -127,6 +168,24 @@ describe("HookManager", () => {
                 hooks: [{ type: "command", command: "/path/to/vscode-session-manager-hook.sh resume" }],
               },
             ],
+            UserPromptSubmit: [
+              {
+                matcher: "",
+                hooks: [{ type: "command", command: "/path/to/vscode-session-manager-hook.sh start" }],
+              },
+            ],
+            Notification: [
+              {
+                matcher: "idle_prompt",
+                hooks: [{ type: "command", command: "/path/to/vscode-session-manager-hook.sh stop" }],
+              },
+            ],
+            SessionEnd: [
+              {
+                matcher: "",
+                hooks: [{ type: "command", command: "/path/to/vscode-session-manager-hook.sh end" }],
+              },
+            ],
           },
         })
       );
@@ -140,6 +199,9 @@ describe("HookManager", () => {
       const written = JSON.parse(settingsCall![1] as string);
       expect(written.hooks.Stop).toHaveLength(1);
       expect(written.hooks.PreToolUse).toHaveLength(1);
+      expect(written.hooks.UserPromptSubmit).toHaveLength(1);
+      expect(written.hooks.Notification).toHaveLength(1);
+      expect(written.hooks.SessionEnd).toHaveLength(1);
     });
   });
 
@@ -232,6 +294,43 @@ describe("HookManager", () => {
       const written = JSON.parse(settingsCall![1] as string);
       expect(written.hooks.Stop).toHaveLength(1);
       expect(written.hooks.Stop[0].hooks[0].command).toBe("echo existing");
+    });
+
+    it("removes all 5 hook events when uninstalling", async () => {
+      mockedReadFile.mockResolvedValue(
+        JSON.stringify({
+          hooks: {
+            Stop: [
+              { matcher: "", hooks: [{ type: "command", command: "/path/to/vscode-session-manager-hook.sh stop" }] },
+            ],
+            PreToolUse: [
+              { matcher: "", hooks: [{ type: "command", command: "/path/to/vscode-session-manager-hook.sh resume" }] },
+            ],
+            UserPromptSubmit: [
+              { matcher: "", hooks: [{ type: "command", command: "/path/to/vscode-session-manager-hook.sh start" }] },
+            ],
+            Notification: [
+              { matcher: "idle_prompt", hooks: [{ type: "command", command: "/path/to/vscode-session-manager-hook.sh stop" }] },
+            ],
+            SessionEnd: [
+              { matcher: "", hooks: [{ type: "command", command: "/path/to/vscode-session-manager-hook.sh end" }] },
+            ],
+          },
+        })
+      );
+      mockedWriteFile.mockResolvedValue(undefined);
+      mockedUnlink.mockResolvedValue(undefined);
+      mockedReaddir.mockResolvedValue([] as unknown as ReturnType<typeof fs.readdir>);
+
+      const result = await hookManager.uninstallHooks();
+      expect(result).toBe(true);
+
+      const settingsCall = mockedWriteFile.mock.calls.find(
+        (call) => call[0]?.toString().includes("settings.json")
+      );
+      const written = JSON.parse(settingsCall![1] as string);
+      // All hook arrays should be removed (empty → deleted)
+      expect(written.hooks).toBeUndefined();
     });
   });
 });
