@@ -5,6 +5,7 @@ import { ClaudeProcessDetector } from "./claudeProcessDetector";
 import { ProjectManager } from "./projectManager";
 import { ProjectTreeProvider } from "./projectTreeProvider";
 import { StatusBarManager } from "./statusBarManager";
+import { HookManager } from "./hookManager";
 import { CONFIG_SECTION, CPU_ACTIVE_THRESHOLD } from "./constants";
 import { ProjectWithStatus } from "./types";
 
@@ -110,8 +111,9 @@ export function activate(context: vscode.ExtensionContext) {
 
   const detector = new ClaudeProcessDetector(cpuThreshold);
   const projectManager = new ProjectManager();
-  const treeProvider = new ProjectTreeProvider(detector, projectManager, context.extensionPath);
-  const statusBar = new StatusBarManager(detector);
+  const hookManager = new HookManager();
+  const treeProvider = new ProjectTreeProvider(detector, projectManager, hookManager, context.extensionPath);
+  const statusBar = new StatusBarManager(detector, hookManager);
 
   // Register tree view
   const treeView = vscode.window.createTreeView("claudeSessionsProjects", {
@@ -220,6 +222,29 @@ export function activate(context: vscode.ExtensionContext) {
       }
     }),
 
+    vscode.commands.registerCommand("claudeSessions.installHooks", async () => {
+      const success = await hookManager.installHooks();
+      if (success) {
+        vscode.window.showInformationMessage(
+          "Claude CLI hooks installed. Session status detection is now more accurate. " +
+          "New Claude sessions will report precise waiting/active states."
+        );
+      } else {
+        vscode.window.showErrorMessage(
+          "Failed to install Claude CLI hooks. Check that ~/.claude/ directory exists."
+        );
+      }
+    }),
+
+    vscode.commands.registerCommand("claudeSessions.uninstallHooks", async () => {
+      const success = await hookManager.uninstallHooks();
+      if (success) {
+        vscode.window.showInformationMessage("Claude CLI hooks removed.");
+      } else {
+        vscode.window.showErrorMessage("Failed to remove Claude CLI hooks.");
+      }
+    }),
+
     // Listen for config changes
     vscode.workspace.onDidChangeConfiguration((e) => {
       if (e.affectsConfiguration(CONFIG_SECTION)) {
@@ -249,6 +274,29 @@ export function activate(context: vscode.ExtensionContext) {
   // Also update badge on each tree refresh (piggyback on polling)
   const badgeInterval = setInterval(updateBadge, 5000);
   context.subscriptions.push({ dispose: () => clearInterval(badgeInterval) });
+
+  // Suggest hook installation on first activation if not installed
+  hookManager.isInstalled().then((installed) => {
+    if (!installed) {
+      const hasShownKey = "hookSuggestionShown";
+      const hasShown = context.globalState.get<boolean>(hasShownKey, false);
+      if (!hasShown) {
+        context.globalState.update(hasShownKey, true);
+        vscode.window
+          .showInformationMessage(
+            "Install Claude CLI hooks for more accurate session status detection? " +
+            "(Eliminates false 'waiting' indicators during subagent work)",
+            "Install Hooks",
+            "Not Now"
+          )
+          .then((choice) => {
+            if (choice === "Install Hooks") {
+              vscode.commands.executeCommand("claudeSessions.installHooks");
+            }
+          });
+      }
+    }
+  });
 }
 
 export function deactivate() {

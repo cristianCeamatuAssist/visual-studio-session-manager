@@ -2,7 +2,7 @@
   "name": "vscode-session-manager",
   "displayName": "Visual Studio Session Manager",
   "description": "Monitor and switch between VS Code projects with Claude Code CLI session status indicators",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "license": "MIT",
   "repository": {
     "type": "git",
@@ -78,6 +78,14 @@
         "command": "claudeSessions.openTerminal",
         "title": "Open Terminal Here",
         "icon": "$(terminal)"
+      },
+      {
+        "command": "claudeSessions.installHooks",
+        "title": "Claude Sessions: Install Status Hooks"
+      },
+      {
+        "command": "claudeSessions.uninstallHooks",
+        "title": "Claude Sessions: Uninstall Status Hooks"
       }
     ],
     "menus": {

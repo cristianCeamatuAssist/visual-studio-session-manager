@@ -2,6 +2,7 @@ import * as vscode from "vscode";
 import * as path from "path";
 import { ClaudeProcessDetector } from "./claudeProcessDetector";
 import { ProjectManager } from "./projectManager";
+import { HookManager } from "./hookManager";
 import { ClaudeSessionStatus, ProjectWithStatus, SessionItem, TreeNode } from "./types";
 import { CONFIG_SECTION, DEFAULT_POLLING_INTERVAL } from "./constants";
 
@@ -12,11 +13,18 @@ export class ProjectTreeProvider implements vscode.TreeDataProvider<TreeNode>, v
   private pollingTimer: ReturnType<typeof setInterval> | undefined;
   private detector: ClaudeProcessDetector;
   private projectManager: ProjectManager;
+  private hookManager: HookManager;
   private extensionPath: string;
 
-  constructor(detector: ClaudeProcessDetector, projectManager: ProjectManager, extensionPath: string) {
+  constructor(
+    detector: ClaudeProcessDetector,
+    projectManager: ProjectManager,
+    hookManager: HookManager,
+    extensionPath: string
+  ) {
     this.detector = detector;
     this.projectManager = projectManager;
+    this.hookManager = hookManager;
     this.extensionPath = extensionPath;
   }
 
@@ -75,8 +83,20 @@ export class ProjectTreeProvider implements vscode.TreeDataProvider<TreeNode>, v
 
     const sessions = await this.detector.detectSessions();
 
+    // Get hook markers for accurate status detection
+    const hookWaitingMarkers = await this.hookManager.getWaitingMarkers();
+
+    // Clean up stale markers
+    const alivePids = new Set(sessions.map((s) => s.pid));
+    const aliveSessionIds = new Set(sessions.map((s) => s.sessionId));
+    this.hookManager.cleanStaleMarkers(alivePids, aliveSessionIds);
+
     const projectsWithStatus: ProjectWithStatus[] = projects.map((config) => {
-      const { status, sessions: matchingSessions } = this.detector.getStatusForProject(config.path, sessions);
+      const { status, sessions: matchingSessions } = this.detector.getStatusForProject(
+        config.path,
+        sessions,
+        hookWaitingMarkers
+      );
       return {
         type: "project" as const,
         config,

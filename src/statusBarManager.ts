@@ -1,14 +1,17 @@
 import * as vscode from "vscode";
 import { ClaudeProcessDetector } from "./claudeProcessDetector";
+import { HookManager } from "./hookManager";
 import { CONFIG_SECTION, DEFAULT_POLLING_INTERVAL } from "./constants";
 
 export class StatusBarManager implements vscode.Disposable {
   private statusBarItem: vscode.StatusBarItem;
   private detector: ClaudeProcessDetector;
+  private hookManager: HookManager;
   private pollingTimer: ReturnType<typeof setInterval> | undefined;
 
-  constructor(detector: ClaudeProcessDetector) {
+  constructor(detector: ClaudeProcessDetector, hookManager: HookManager) {
     this.detector = detector;
+    this.hookManager = hookManager;
     this.statusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 100);
     this.statusBarItem.command = "claudeSessionsProjects.focus";
     this.statusBarItem.name = "Claude Sessions";

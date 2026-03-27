@@ -1,0 +1,257 @@
+import * as fs from "fs/promises";
+import * as path from "path";
+import { CLAUDE_SESSIONS_DIR, CLAUDE_SETTINGS_PATH, WAITING_MARKER_PREFIX } from "./constants";
+
+interface HookEntry {
+  matcher: string;
+  hooks: Array<{ type: string; command: string }>;
+}
+
+interface ClaudeSettings {
+  hooks?: {
+    Stop?: HookEntry[];
+    PreToolUse?: HookEntry[];
+    [key: string]: HookEntry[] | undefined;
+  };
+  [key: string]: unknown;
+}
+
+const HOOK_SCRIPT_NAME = "vscode-session-manager-hook.sh";
+const HOOK_IDENTIFIER = "vscode-session-manager";
+
+function getHookScriptPath(): string {
+  return path.join(path.dirname(CLAUDE_SETTINGS_PATH), HOOK_SCRIPT_NAME);
+}
+
+function getHookScriptContent(): string {
+  return `#!/bin/bash
+# Visual Studio Session Manager - Claude CLI hook helper
+# Manages waiting marker files for accurate session status detection
+ACTION="$1"
+SESSIONS_DIR="$HOME/.claude/sessions"
+MARKER_PREFIX="${WAITING_MARKER_PREFIX}"
+
+# Extract session_id from stdin JSON (hook event payload)
+INPUT=$(cat)
+SESSION_ID=$(echo "$INPUT" | grep -o '"session_id":"[^"]*"' | head -1 | cut -d'"' -f4)
+
+# Fallback to PPID if session_id not available
+MARKER_ID="\${SESSION_ID:-$PPID}"
+
+if [ -n "$MARKER_ID" ]; then
+  case "$ACTION" in
+    stop)
+      touch "$SESSIONS_DIR/$MARKER_PREFIX$MARKER_ID"
+      ;;
+    resume)
+      rm -f "$SESSIONS_DIR/$MARKER_PREFIX$MARKER_ID"
+      ;;
+  esac
+fi
+`;
+}
+
+export class HookManager {
+  async isInstalled(): Promise<boolean> {
+    try {
+      const content = await fs.readFile(CLAUDE_SETTINGS_PATH, "utf-8");
+      const settings: ClaudeSettings = JSON.parse(content);
+      const stopHooks = settings.hooks?.Stop ?? [];
+      return stopHooks.some((h) =>
+        h.hooks?.some((hh) => hh.command.includes(HOOK_IDENTIFIER))
+      );
+    } catch {
+      return false;
+    }
+  }
+
+  async installHooks(): Promise<boolean> {
+    try {
+      // Step 1: Write the helper script
+      const scriptPath = getHookScriptPath();
+      await fs.writeFile(scriptPath, getHookScriptContent(), { mode: 0o755 });
+
+      // Step 2: Update Claude settings with hooks
+      let settings: ClaudeSettings = {};
+      try {
+        const content = await fs.readFile(CLAUDE_SETTINGS_PATH, "utf-8");
+        settings = JSON.parse(content);
+      } catch {
+        // File doesn't exist or invalid — start fresh
+      }
+
+      if (!settings.hooks) {
+        settings.hooks = {};
+      }
+
+      // Add Stop hook (if not already present)
+      const stopHooks = settings.hooks.Stop ?? [];
+      const hasStopHook = stopHooks.some((h) =>
+        h.hooks?.some((hh) => hh.command.includes(HOOK_IDENTIFIER))
+      );
+      if (!hasStopHook) {
+        stopHooks.push({
+          matcher: "",
+          hooks: [
+            {
+              type: "command",
+              command: `${scriptPath} stop`,
+            },
+          ],
+        });
+        settings.hooks.Stop = stopHooks;
+      }
+
+      // Add PreToolUse hook (if not already present)
+      const preToolHooks = settings.hooks.PreToolUse ?? [];
+      const hasPreToolHook = preToolHooks.some((h) =>
+        h.hooks?.some((hh) => hh.command.includes(HOOK_IDENTIFIER))
+      );
+      if (!hasPreToolHook) {
+        preToolHooks.push({
+          matcher: "",
+          hooks: [
+            {
+              type: "command",
+              command: `${scriptPath} resume`,
+            },
+          ],
+        });
+        settings.hooks.PreToolUse = preToolHooks;
+      }
+
+      await fs.writeFile(
+        CLAUDE_SETTINGS_PATH,
+        JSON.stringify(settings, null, 2),
+        "utf-8"
+      );
+
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  async uninstallHooks(): Promise<boolean> {
+    try {
+      const content = await fs.readFile(CLAUDE_SETTINGS_PATH, "utf-8");
+      const settings: ClaudeSettings = JSON.parse(content);
+
+      if (settings.hooks) {
+        // Remove our hooks from Stop
+        if (settings.hooks.Stop) {
+          settings.hooks.Stop = settings.hooks.Stop.filter(
+            (h) => !h.hooks?.some((hh) => hh.command.includes(HOOK_IDENTIFIER))
+          );
+          if (settings.hooks.Stop.length === 0) {
+            delete settings.hooks.Stop;
+          }
+        }
+
+        // Remove our hooks from PreToolUse
+        if (settings.hooks.PreToolUse) {
+          settings.hooks.PreToolUse = settings.hooks.PreToolUse.filter(
+            (h) => !h.hooks?.some((hh) => hh.command.includes(HOOK_IDENTIFIER))
+          );
+          if (settings.hooks.PreToolUse.length === 0) {
+            delete settings.hooks.PreToolUse;
+          }
+        }
+
+        if (Object.keys(settings.hooks).length === 0) {
+          delete settings.hooks;
+        }
+      }
+
+      await fs.writeFile(
+        CLAUDE_SETTINGS_PATH,
+        JSON.stringify(settings, null, 2),
+        "utf-8"
+      );
+
+      // Remove helper script
+      try {
+        await fs.unlink(getHookScriptPath());
+      } catch {
+        // Script already gone
+      }
+
+      // Clean up any remaining marker files
+      await this.cleanAllMarkers();
+
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * Read waiting marker files from the sessions directory.
+   * Returns a set of marker IDs (session IDs or PIDs) that are confirmed waiting.
+   */
+  async getWaitingMarkers(): Promise<Set<string>> {
+    const markers = new Set<string>();
+    try {
+      const files = await fs.readdir(CLAUDE_SESSIONS_DIR);
+      for (const file of files) {
+        if (file.startsWith(WAITING_MARKER_PREFIX)) {
+          const markerId = file.slice(WAITING_MARKER_PREFIX.length);
+          if (markerId) {
+            markers.add(markerId);
+          }
+        }
+      }
+    } catch {
+      // Sessions dir doesn't exist
+    }
+    return markers;
+  }
+
+  /**
+   * Clean up stale marker files for processes/sessions that no longer exist.
+   */
+  async cleanStaleMarkers(alivePids: Set<number>, aliveSessionIds: Set<string>): Promise<void> {
+    try {
+      const files = await fs.readdir(CLAUDE_SESSIONS_DIR);
+      for (const file of files) {
+        if (file.startsWith(WAITING_MARKER_PREFIX)) {
+          const markerId = file.slice(WAITING_MARKER_PREFIX.length);
+          const markerPid = parseInt(markerId, 10);
+          const isPidMarker = !isNaN(markerPid);
+
+          // Remove if the marker doesn't match any alive session
+          const isStale = isPidMarker
+            ? !alivePids.has(markerPid)
+            : !aliveSessionIds.has(markerId);
+
+          if (isStale) {
+            try {
+              await fs.unlink(path.join(CLAUDE_SESSIONS_DIR, file));
+            } catch {
+              // Already removed
+            }
+          }
+        }
+      }
+    } catch {
+      // Sessions dir doesn't exist
+    }
+  }
+
+  private async cleanAllMarkers(): Promise<void> {
+    try {
+      const files = await fs.readdir(CLAUDE_SESSIONS_DIR);
+      for (const file of files) {
+        if (file.startsWith(WAITING_MARKER_PREFIX)) {
+          try {
+            await fs.unlink(path.join(CLAUDE_SESSIONS_DIR, file));
+          } catch {
+            // Already removed
+          }
+        }
+      }
+    } catch {
+      // Sessions dir doesn't exist
+    }
+  }
+}
