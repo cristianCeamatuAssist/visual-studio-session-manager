@@ -6,7 +6,7 @@ import { ProjectManager } from "./projectManager";
 import { ProjectTreeProvider } from "./projectTreeProvider";
 import { StatusBarManager } from "./statusBarManager";
 import { HookManager } from "./hookManager";
-import { CONFIG_SECTION, CPU_ACTIVE_THRESHOLD, CLAUDE_SESSIONS_DIR } from "./constants";
+import { CONFIG_SECTION, CPU_ACTIVE_THRESHOLD, CLAUDE_SESSIONS_DIR, HOOKS_POLLING_INTERVAL } from "./constants";
 import { ProjectWithStatus } from "./types";
 
 const execAsync = promisify(exec);
@@ -115,6 +115,27 @@ export function activate(context: vscode.ExtensionContext) {
   const treeProvider = new ProjectTreeProvider(detector, projectManager, hookManager, context.extensionPath);
   const statusBar = new StatusBarManager(detector, hookManager);
 
+  // Cache hooks state and propagate to components
+  let hooksInstalled = false;
+  const updateHooksState = async () => {
+    const installed = await hookManager.isInstalled();
+    if (installed !== hooksInstalled) {
+      hooksInstalled = installed;
+      treeProvider.setHooksInstalled(installed);
+      statusBar.setHooksInstalled(installed);
+
+      // Restart polling with appropriate interval
+      const interval = installed ? HOOKS_POLLING_INTERVAL : undefined;
+      treeProvider.stopPolling();
+      treeProvider.startPolling(interval);
+      statusBar.stopPolling();
+      statusBar.startPolling(interval);
+    }
+  };
+
+  // Initial check
+  updateHooksState();
+
   // Register tree view
   const treeView = vscode.window.createTreeView("claudeSessionsProjects", {
     treeDataProvider: treeProvider,
@@ -128,7 +149,7 @@ export function activate(context: vscode.ExtensionContext) {
 
   // Update badge on tree view when sessions change
   const updateBadge = async () => {
-    const sessions = await detector.detectSessions();
+    const sessions = await detector.detectSessions(hooksInstalled);
     const count = sessions.length;
     treeView.badge = count > 0 ? { value: count, tooltip: `${count} Claude session(s)` } : undefined;
   };
@@ -253,11 +274,12 @@ export function activate(context: vscode.ExtensionContext) {
           .get<number>("cpuThreshold", CPU_ACTIVE_THRESHOLD);
         detector.setCpuThreshold(newThreshold);
 
+        const interval = hooksInstalled ? HOOKS_POLLING_INTERVAL : undefined;
         treeProvider.stopPolling();
-        treeProvider.startPolling();
+        treeProvider.startPolling(interval);
 
         statusBar.stopPolling();
-        statusBar.startPolling();
+        statusBar.startPolling(interval);
 
         treeProvider.refresh();
       }
@@ -287,6 +309,7 @@ export function activate(context: vscode.ExtensionContext) {
       clearTimeout(refreshDebounceTimer);
     }
     refreshDebounceTimer = setTimeout(() => {
+      updateHooksState();
       treeProvider.refresh();
       statusBar.update();
       updateBadge();
@@ -308,8 +331,8 @@ export function activate(context: vscode.ExtensionContext) {
         context.globalState.update(hasShownKey, true);
         vscode.window
           .showInformationMessage(
-            "Install Claude CLI hooks for more accurate session status detection? " +
-            "(Eliminates false 'waiting' indicators during subagent work)",
+            "Install Claude CLI hooks for accurate session status detection? " +
+            "(Eliminates flickering — uses lifecycle events instead of CPU monitoring)",
             "Install Hooks",
             "Not Now"
           )
