@@ -6,7 +6,7 @@ import { ProjectManager } from "./projectManager";
 import { ProjectTreeProvider } from "./projectTreeProvider";
 import { StatusBarManager } from "./statusBarManager";
 import { HookManager } from "./hookManager";
-import { CONFIG_SECTION, CPU_ACTIVE_THRESHOLD } from "./constants";
+import { CONFIG_SECTION, CPU_ACTIVE_THRESHOLD, CLAUDE_SESSIONS_DIR } from "./constants";
 import { ProjectWithStatus } from "./types";
 
 const execAsync = promisify(exec);
@@ -275,10 +275,34 @@ export function activate(context: vscode.ExtensionContext) {
   const badgeInterval = setInterval(updateBadge, 5000);
   context.subscriptions.push({ dispose: () => clearInterval(badgeInterval) });
 
+  // Watch ~/.claude/sessions/ for marker file changes so all windows sync immediately
+  const sessionsPattern = new vscode.RelativePattern(
+    vscode.Uri.file(CLAUDE_SESSIONS_DIR),
+    "**"
+  );
+  const sessionsWatcher = vscode.workspace.createFileSystemWatcher(sessionsPattern);
+  let refreshDebounceTimer: ReturnType<typeof setTimeout> | undefined;
+  const debouncedRefresh = () => {
+    if (refreshDebounceTimer) {
+      clearTimeout(refreshDebounceTimer);
+    }
+    refreshDebounceTimer = setTimeout(() => {
+      treeProvider.refresh();
+      statusBar.update();
+      updateBadge();
+    }, 300);
+  };
+  sessionsWatcher.onDidCreate(debouncedRefresh);
+  sessionsWatcher.onDidDelete(debouncedRefresh);
+  sessionsWatcher.onDidChange(debouncedRefresh);
+  context.subscriptions.push(sessionsWatcher, { dispose: () => {
+    if (refreshDebounceTimer) clearTimeout(refreshDebounceTimer);
+  }});
+
   // Suggest hook installation if not installed — show once per version
   hookManager.isInstalled().then((installed) => {
     if (!installed) {
-      const hasShownKey = "hookSuggestionShown_v0.2.0";
+      const hasShownKey = "hookSuggestionShown_v0.2.1";
       const hasShown = context.globalState.get<boolean>(hasShownKey, false);
       if (!hasShown) {
         context.globalState.update(hasShownKey, true);

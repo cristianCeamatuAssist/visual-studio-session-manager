@@ -1,58 +1,50 @@
 # Visual Studio Session Manager
 
-Monitor and switch between VS Code projects with Claude Code CLI session status indicators.
+Monitor and switch between VS Code projects with live Claude Code CLI session status indicators.
 
 ## Features
 
-- **Project Sidebar** — See all your projects in a dedicated activity bar panel with live session status (active/waiting/inactive)
-- **Session Monitoring** — Detects running Claude Code CLI sessions by reading `~/.claude/sessions/` and checking process status
-- **Smart Window Switching** — Click a project to switch to it. On macOS, the new window appears in the exact same position for seamless switching
-- **Auto-Detect Projects** — Automatically discovers projects from your Claude Code session history
-- **Expandable Sessions** — Expand a project to see individual sessions with PID, CPU usage, and start time
-- **Status Bar** — Shows total Claude session count with color-coded status
-- **Terminal Integration** — Open a terminal at any project directory with one click
+- **Live session status** — see which projects have active, waiting, or inactive Claude Code sessions at a glance
+- **Sidebar panel** — dedicated activity bar icon with a tree view of all your monitored projects
+- **Auto-detect projects** — scans your Claude Code session history and adds projects automatically
+- **Smart window switching** — click to switch projects; on macOS the new window appears in the exact same position
+- **Expandable sessions** — expand a project to see individual sessions with PID, CPU usage, and start time
+- **Status bar** — shows total Claude session count with color-coded status
+- **Terminal integration** — open a terminal at any project directory with one click
+- **Hook integration** — optional CLI hooks for instant status updates across all VS Code windows
 
-## Requirements
+## Getting Started
 
-- macOS (window positioning uses AppleScript)
-- [Claude Code CLI](https://docs.anthropic.com/en/docs/claude-code) installed and used at least once
-- VS Code 1.74 or later
+1. Install from the [VS Code Marketplace](https://marketplace.visualstudio.com/items?itemName=cristianCeamatuAssist.vscode-session-manager)
+2. Open the **Claude Sessions** panel in the activity bar (left sidebar)
+3. Click **Auto-Detect from Claude History** to find your projects, or add them manually
+4. Optionally run **Claude Sessions: Install Status Hooks** from the command palette for instant status updates
 
-## Installation
+## How It Works
 
-1. Download the latest `.vsix` file from [Releases](https://github.com/cristianCeamatuAssist/visual-studio-session-manager/releases)
-2. Install it:
+The extension reads session files from `~/.claude/sessions/` to discover Claude Code CLI sessions, then uses `ps` to check process status and CPU usage. Sessions are matched to projects by comparing working directories.
 
-```bash
-code --install-extension vscode-session-manager-0.1.0.vsix
-```
+| Status | Meaning |
+|--------|---------|
+| Green dot | Claude is actively working (high CPU) |
+| Yellow dot | Claude is waiting for input |
+| Gray dot | No active session |
 
-Or in VS Code: `Cmd+Shift+P` → "Extensions: Install from VSIX..." → select the downloaded file.
-
-## Usage
-
-1. Open the **Session Manager** panel in the activity bar (terminal icon on the left sidebar)
-2. Click **Auto-Detect** (magnifying glass icon) to discover projects from your Claude history
-3. Or click **+** to manually add project folders
-4. Projects show live status:
-   - 🟢 **Active** — Claude is actively working (high CPU)
-   - 🟡 **Waiting** — Claude session is idle, waiting for input
-   - ⚫ **Inactive** — No running sessions
-5. Click a project to switch to it. Right-click for more options (rename, remove, open terminal, open in new window)
+Window switching on macOS uses AppleScript to capture the current window position before opening a new project, then repositions the new window to the same coordinates.
 
 ## Configuration
 
 | Setting | Default | Description |
 |---------|---------|-------------|
 | `claudeSessions.pollingInterval` | `3000` | How often to check session status (ms) |
-| `claudeSessions.cpuThreshold` | `5.0` | CPU% above which a session is "active" vs "waiting" |
-| `claudeSessions.showStatusBar` | `true` | Show session count in the status bar |
+| `claudeSessions.cpuThreshold` | `5` | CPU% threshold for active vs waiting |
+| `claudeSessions.showStatusBar` | `true` | Show session count in status bar |
 
-## How It Works
+## Requirements
 
-The extension reads JSON session files from `~/.claude/sessions/` to discover running Claude Code CLI sessions. It then uses `ps` to check if each session's process is still alive and how much CPU it's consuming. Sessions are matched to projects by comparing the session's working directory (`cwd`) against your registered project paths.
-
-Window switching on macOS uses AppleScript to capture the current window position before opening a new project, then repositions the new window to the same coordinates — giving the impression that you never left.
+- macOS (window positioning and process detection use AppleScript and `ps`)
+- [Claude Code CLI](https://docs.anthropic.com/en/docs/claude-code) installed and used at least once
+- VS Code 1.74 or later
 
 ## License
 

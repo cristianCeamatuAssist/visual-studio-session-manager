@@ -1,6 +1,8 @@
 .vscode/**
 src/**
 node_modules/**
+.github/**
+docs/**
 .gitignore
 tsconfig.json
 esbuild.mjs
@@ -8,3 +10,4 @@ esbuild.mjs
 **/*.map
 vitest.config.ts
 src/__tests__/**
+*.vsix
