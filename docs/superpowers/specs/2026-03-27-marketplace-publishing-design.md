@@ -24,7 +24,7 @@ Push to main → git tag vX.Y.Z → git push --tags → GitHub Action triggers �
 ### GitHub Actions Workflow (`.github/workflows/publish.yml`)
 
 - **Trigger:** Push of tags matching `v*`
-- **Steps:** checkout → setup node 20 → npm install → npm test → vsce publish
+- **Steps:** checkout → setup node 22 (forced to Node 24 runtime) → npm install → npm test → vsce publish
 - **Secret:** `VSCE_PAT` (Azure DevOps Personal Access Token with Marketplace > Manage scope)
 
 ### Changes Made
