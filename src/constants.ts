@@ -13,3 +13,6 @@ export const DEBOUNCE_READINGS = 3;
 
 /** Prefix for hook-created waiting marker files in sessions dir */
 export const WAITING_MARKER_PREFIX = ".waiting_";
+
+/** Polling interval when hooks are installed (less frequent since file watcher handles immediacy) */
+export const HOOKS_POLLING_INTERVAL = 5000;
