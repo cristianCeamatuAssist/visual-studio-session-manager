@@ -275,10 +275,10 @@ export function activate(context: vscode.ExtensionContext) {
   const badgeInterval = setInterval(updateBadge, 5000);
   context.subscriptions.push({ dispose: () => clearInterval(badgeInterval) });
 
-  // Suggest hook installation on first activation if not installed
+  // Suggest hook installation if not installed — show once per version
   hookManager.isInstalled().then((installed) => {
     if (!installed) {
-      const hasShownKey = "hookSuggestionShown";
+      const hasShownKey = "hookSuggestionShown_v0.2.0";
       const hasShown = context.globalState.get<boolean>(hasShownKey, false);
       if (!hasShown) {
         context.globalState.update(hasShownKey, true);
