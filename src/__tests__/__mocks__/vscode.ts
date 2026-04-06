@@ -1,6 +1,5 @@
 const configStore: Record<string, Record<string, unknown>> = {
   claudeSessions: {
-    projects: [],
     pollingInterval: 3000,
     cpuThreshold: 5.0,
     showStatusBar: true,
@@ -59,11 +58,11 @@ const Uri = {
   file: (path: string) => ({ fsPath: path, scheme: "file" }),
 };
 
-const EventEmitter = vi.fn().mockImplementation(() => ({
-  event: vi.fn(),
-  fire: vi.fn(),
-  dispose: vi.fn(),
-}));
+class EventEmitter {
+  event = vi.fn();
+  fire = vi.fn();
+  dispose = vi.fn();
+}
 
 const TreeItemCollapsibleState = {
   None: 0,
@@ -98,7 +97,6 @@ class MarkdownString {
 
 export function _resetConfigStore(): void {
   configStore.claudeSessions = {
-    projects: [],
     pollingInterval: 3000,
     cpuThreshold: 5.0,
     showStatusBar: true,

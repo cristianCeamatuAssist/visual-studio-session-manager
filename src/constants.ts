@@ -22,3 +22,6 @@ export const HOOKS_POLLING_INTERVAL = 5000;
 
 /** How long to keep .done_ markers after a session ends (ms) */
 export const DONE_MARKER_TTL = 5 * 60 * 1000;
+
+/** Directory where VS Code window instances register themselves for auto-discovery */
+export const VSCODE_WORKSPACES_DIR = path.join(os.homedir(), ".claude", "vscode-workspaces");
