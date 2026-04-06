@@ -1,6 +1,6 @@
 import * as fs from "fs/promises";
 import * as path from "path";
-import { CLAUDE_SESSIONS_DIR, CLAUDE_SETTINGS_PATH, WAITING_MARKER_PREFIX } from "./constants";
+import { CLAUDE_SESSIONS_DIR, CLAUDE_SETTINGS_PATH, WAITING_MARKER_PREFIX, DONE_MARKER_PREFIX, DONE_MARKER_TTL } from "./constants";
 
 interface HookEntry {
   matcher: string;
@@ -26,10 +26,14 @@ function getHookScriptPath(): string {
 function getHookScriptContent(): string {
   return `#!/bin/bash
 # Visual Studio Session Manager - Claude CLI hook helper
-# Manages waiting marker files for accurate session status detection
+# Manages marker files for 3-state session status detection:
+#   - No marker = working (orange)
+#   - .waiting_ marker = needs input (red)
+#   - .done_ marker = session completed (green)
 ACTION="$1"
 SESSIONS_DIR="$HOME/.claude/sessions"
-MARKER_PREFIX="${WAITING_MARKER_PREFIX}"
+WAITING_PREFIX="${WAITING_MARKER_PREFIX}"
+DONE_PREFIX="${DONE_MARKER_PREFIX}"
 
 # Extract session_id from stdin JSON (hook event payload)
 INPUT=$(cat)
@@ -42,15 +46,18 @@ if [ -n "$MARKER_ID" ]; then
   case "$ACTION" in
     stop)
       # Claude finished responding — session is now waiting for input
-      touch "$SESSIONS_DIR/$MARKER_PREFIX$MARKER_ID"
+      rm -f "$SESSIONS_DIR/$DONE_PREFIX$MARKER_ID"
+      touch "$SESSIONS_DIR/$WAITING_PREFIX$MARKER_ID"
       ;;
     resume|start)
-      # Tool about to run OR user submitted prompt — session is active
-      rm -f "$SESSIONS_DIR/$MARKER_PREFIX$MARKER_ID"
+      # Tool about to run OR user submitted prompt — session is active/working
+      rm -f "$SESSIONS_DIR/$WAITING_PREFIX$MARKER_ID"
+      rm -f "$SESSIONS_DIR/$DONE_PREFIX$MARKER_ID"
       ;;
     end)
-      # Session terminated — clean up marker
-      rm -f "$SESSIONS_DIR/$MARKER_PREFIX$MARKER_ID"
+      # Session terminated — mark as done (green)
+      rm -f "$SESSIONS_DIR/$WAITING_PREFIX$MARKER_ID"
+      touch "$SESSIONS_DIR/$DONE_PREFIX$MARKER_ID"
       ;;
   esac
 fi
@@ -62,8 +69,9 @@ export class HookManager {
     try {
       const content = await fs.readFile(CLAUDE_SETTINGS_PATH, "utf-8");
       const settings: ClaudeSettings = JSON.parse(content);
+      // All 5 hooks must be present for full 3-state detection
       const hookEvents = ["Stop", "PreToolUse", "UserPromptSubmit", "Notification", "SessionEnd"] as const;
-      return hookEvents.some((event) => {
+      return hookEvents.every((event) => {
         const eventHooks = settings.hooks?.[event] ?? [];
         return eventHooks.some((h) =>
           h.hooks?.some((hh) => hh.command.includes(HOOK_IDENTIFIER))
@@ -301,28 +309,66 @@ export class HookManager {
   }
 
   /**
+   * Read done marker files from the sessions directory.
+   * Returns a set of marker IDs (session IDs or PIDs) for completed sessions.
+   */
+  async getDoneMarkers(): Promise<Set<string>> {
+    const markers = new Set<string>();
+    try {
+      const files = await fs.readdir(CLAUDE_SESSIONS_DIR);
+      for (const file of files) {
+        if (file.startsWith(DONE_MARKER_PREFIX)) {
+          const markerId = file.slice(DONE_MARKER_PREFIX.length);
+          if (markerId) {
+            markers.add(markerId);
+          }
+        }
+      }
+    } catch {
+      // Sessions dir doesn't exist
+    }
+    return markers;
+  }
+
+  /**
    * Clean up stale marker files for processes/sessions that no longer exist.
+   * .waiting_ markers are cleaned immediately; .done_ markers are kept for DONE_MARKER_TTL.
    */
   async cleanStaleMarkers(alivePids: Set<number>, aliveSessionIds: Set<string>): Promise<void> {
     try {
       const files = await fs.readdir(CLAUDE_SESSIONS_DIR);
+      const now = Date.now();
+
       for (const file of files) {
+        const filePath = path.join(CLAUDE_SESSIONS_DIR, file);
+
         if (file.startsWith(WAITING_MARKER_PREFIX)) {
           const markerId = file.slice(WAITING_MARKER_PREFIX.length);
           const markerPid = parseInt(markerId, 10);
           const isPidMarker = !isNaN(markerPid);
-
-          // Remove if the marker doesn't match any alive session
           const isStale = isPidMarker
             ? !alivePids.has(markerPid)
             : !aliveSessionIds.has(markerId);
 
           if (isStale) {
+            try { await fs.unlink(filePath); } catch { /* Already removed */ }
+          }
+        } else if (file.startsWith(DONE_MARKER_PREFIX)) {
+          const markerId = file.slice(DONE_MARKER_PREFIX.length);
+          const markerPid = parseInt(markerId, 10);
+          const isPidMarker = !isNaN(markerPid);
+          const isStale = isPidMarker
+            ? !alivePids.has(markerPid)
+            : !aliveSessionIds.has(markerId);
+
+          // Keep done markers for TTL even if session is gone (green indicator)
+          if (isStale) {
             try {
-              await fs.unlink(path.join(CLAUDE_SESSIONS_DIR, file));
-            } catch {
-              // Already removed
-            }
+              const stat = await fs.stat(filePath);
+              if (now - stat.mtimeMs > DONE_MARKER_TTL) {
+                await fs.unlink(filePath);
+              }
+            } catch { /* Already removed */ }
           }
         }
       }
@@ -332,10 +378,11 @@ export class HookManager {
   }
 
   private async cleanAllMarkers(): Promise<void> {
+    const prefixes = [WAITING_MARKER_PREFIX, DONE_MARKER_PREFIX];
     try {
       const files = await fs.readdir(CLAUDE_SESSIONS_DIR);
       for (const file of files) {
-        if (file.startsWith(WAITING_MARKER_PREFIX)) {
+        if (prefixes.some((p) => file.startsWith(p))) {
           try {
             await fs.unlink(path.join(CLAUDE_SESSIONS_DIR, file));
           } catch {

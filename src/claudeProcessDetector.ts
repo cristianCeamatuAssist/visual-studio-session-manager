@@ -94,7 +94,8 @@ export class ClaudeProcessDetector {
     projectPath: string,
     sessions: ClaudeSession[],
     hookWaitingMarkers?: Set<string>,
-    hooksInstalled = false
+    hooksInstalled = false,
+    hookDoneMarkers?: Set<string>
   ): { status: ClaudeSessionStatus; sessions: ClaudeSession[] } {
     const normalized = projectPath.replace(/\/+$/, "");
     const matching = sessions.filter((s) => {
@@ -110,16 +111,32 @@ export class ClaudeProcessDetector {
 
     // Hooks mode: marker-only status determination, no CPU logic
     if (hooksInstalled) {
-      const markers = hookWaitingMarkers ?? new Set<string>();
-      const isWaiting = matching.some(
-        (s) =>
-          markers.has(String(s.pid)) ||
-          markers.has(s.sessionId)
+      const waitingMarkers = hookWaitingMarkers ?? new Set<string>();
+      const doneMarkers = hookDoneMarkers ?? new Set<string>();
+
+      const hasWaiting = matching.some(
+        (s) => waitingMarkers.has(String(s.pid)) || waitingMarkers.has(s.sessionId)
       );
-      return {
-        status: isWaiting ? ClaudeSessionStatus.Waiting : ClaudeSessionStatus.Active,
-        sessions: sorted,
-      };
+      const hasDone = matching.some(
+        (s) => doneMarkers.has(String(s.pid)) || doneMarkers.has(s.sessionId)
+      );
+      // Priority: any active (no marker) > any waiting > all done
+      const allHaveMarkers = matching.every(
+        (s) =>
+          waitingMarkers.has(String(s.pid)) || waitingMarkers.has(s.sessionId) ||
+          doneMarkers.has(String(s.pid)) || doneMarkers.has(s.sessionId)
+      );
+
+      if (!allHaveMarkers) {
+        return { status: ClaudeSessionStatus.Active, sessions: sorted };
+      }
+      if (hasWaiting) {
+        return { status: ClaudeSessionStatus.Waiting, sessions: sorted };
+      }
+      if (hasDone) {
+        return { status: ClaudeSessionStatus.Done, sessions: sorted };
+      }
+      return { status: ClaudeSessionStatus.Active, sessions: sorted };
     }
 
     // CPU mode: existing logic unchanged

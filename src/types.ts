@@ -1,6 +1,7 @@
 export enum ClaudeSessionStatus {
   Active = "active",
   Waiting = "waiting",
+  Done = "done",
   Inactive = "inactive",
 }
 

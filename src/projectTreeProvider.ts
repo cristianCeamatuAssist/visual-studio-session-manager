@@ -90,6 +90,7 @@ export class ProjectTreeProvider implements vscode.TreeDataProvider<TreeNode>, v
 
     // Get hook markers for accurate status detection
     const hookWaitingMarkers = await this.hookManager.getWaitingMarkers();
+    const hookDoneMarkers = await this.hookManager.getDoneMarkers();
 
     // Clean up stale markers
     const alivePids = new Set(sessions.map((s) => s.pid));
@@ -101,7 +102,8 @@ export class ProjectTreeProvider implements vscode.TreeDataProvider<TreeNode>, v
         config.path,
         sessions,
         hookWaitingMarkers,
-        this.hooksInstalled
+        this.hooksInstalled,
+        hookDoneMarkers
       );
       return {
         type: "project" as const,
@@ -116,7 +118,8 @@ export class ProjectTreeProvider implements vscode.TreeDataProvider<TreeNode>, v
     const statusOrder = {
       [ClaudeSessionStatus.Active]: 0,
       [ClaudeSessionStatus.Waiting]: 1,
-      [ClaudeSessionStatus.Inactive]: 2,
+      [ClaudeSessionStatus.Done]: 2,
+      [ClaudeSessionStatus.Inactive]: 3,
     };
 
     projectsWithStatus.sort((a, b) => {
@@ -163,26 +166,31 @@ export class ProjectTreeProvider implements vscode.TreeDataProvider<TreeNode>, v
 
     const item = new vscode.TreeItem(label, vscode.TreeItemCollapsibleState.None);
 
-    // In hooks mode, use parent project status. In CPU mode, use CPU threshold.
-    const isActive = this.hooksInstalled
-      ? session.cpuPercent === -1 // -1 means hooks mode, check parent status
-      : session.cpuPercent > 5;
-
     if (this.hooksInstalled) {
-      item.description = `${started}`;
+      // Hooks mode: derive status from parent project
+      const parentStatus = element.parentProject.status;
+      const statusConfig = {
+        [ClaudeSessionStatus.Active]: { icon: "pulse", color: "terminal.ansiYellow", label: "Working" },
+        [ClaudeSessionStatus.Waiting]: { icon: "bell", color: "terminal.ansiRed", label: "Needs input" },
+        [ClaudeSessionStatus.Done]: { icon: "check", color: "terminal.ansiGreen", label: "Done" },
+        [ClaudeSessionStatus.Inactive]: { icon: "circle-outline", color: "terminal.ansiBrightBlack", label: "Inactive" },
+      };
+      const cfg = statusConfig[parentStatus];
+      item.description = `${cfg.label} - ${started}`;
+      item.iconPath = new vscode.ThemeIcon(cfg.icon, new vscode.ThemeColor(cfg.color));
     } else {
+      // CPU mode fallback
+      const isActive = session.cpuPercent > 5;
       item.description = isActive
         ? `Working (CPU: ${session.cpuPercent.toFixed(0)}%) - ${started}`
         : `Needs input - ${started}`;
+      item.iconPath = new vscode.ThemeIcon(
+        isActive ? "pulse" : "bell",
+        isActive
+          ? new vscode.ThemeColor("terminal.ansiYellow")
+          : new vscode.ThemeColor("terminal.ansiRed")
+      );
     }
-
-    // Yellow = working, Red = needs input (user-centric: red means YOU need to act)
-    item.iconPath = new vscode.ThemeIcon(
-      isActive ? "pulse" : "watch",
-      isActive
-        ? new vscode.ThemeColor("terminal.ansiYellow")
-        : new vscode.ThemeColor("terminal.ansiRed")
-    );
 
     const md = new vscode.MarkdownString();
     md.appendMarkdown(`**Session** \`${session.sessionId.slice(0, 8)}...\`\n\n`);
@@ -209,6 +217,8 @@ export class ProjectTreeProvider implements vscode.TreeDataProvider<TreeNode>, v
         return "status-active.svg";
       case ClaudeSessionStatus.Waiting:
         return "status-waiting.svg";
+      case ClaudeSessionStatus.Done:
+        return "status-done.svg";
       case ClaudeSessionStatus.Inactive:
         return "status-inactive.svg";
     }
@@ -227,6 +237,10 @@ export class ProjectTreeProvider implements vscode.TreeDataProvider<TreeNode>, v
       case ClaudeSessionStatus.Waiting: {
         const countStr = project.sessionCount > 1 ? ` (${project.sessionCount} sessions)` : "";
         return `Needs input${countStr}`;
+      }
+      case ClaudeSessionStatus.Done: {
+        const countStr = project.sessionCount > 1 ? ` (${project.sessionCount} sessions)` : "";
+        return `Done${countStr}`;
       }
       case ClaudeSessionStatus.Inactive:
         return "No session";
