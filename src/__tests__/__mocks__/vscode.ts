@@ -1,6 +1,5 @@
 const configStore: Record<string, Record<string, unknown>> = {
   claudeSessions: {
-    projects: [],
     pollingInterval: 3000,
     cpuThreshold: 5.0,
     showStatusBar: true,
@@ -98,7 +97,6 @@ class MarkdownString {
 
 export function _resetConfigStore(): void {
   configStore.claudeSessions = {
-    projects: [],
     pollingInterval: 3000,
     cpuThreshold: 5.0,
     showStatusBar: true,
