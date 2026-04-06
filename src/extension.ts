@@ -1,13 +1,16 @@
 import * as vscode from "vscode";
+import * as fsSync from "fs";
+import * as fs from "fs/promises";
+import * as path from "path";
 import { exec } from "child_process";
 import { promisify } from "util";
 import { ClaudeProcessDetector } from "./claudeProcessDetector";
-import { ProjectManager } from "./projectManager";
+import { WorkspaceRegistry } from "./workspaceRegistry";
 import { ProjectTreeProvider } from "./projectTreeProvider";
 import { StatusBarManager } from "./statusBarManager";
 import { HookManager } from "./hookManager";
-import { CONFIG_SECTION, CPU_ACTIVE_THRESHOLD, CLAUDE_SESSIONS_DIR, HOOKS_POLLING_INTERVAL } from "./constants";
-import { ProjectWithStatus } from "./types";
+import { CONFIG_SECTION, CPU_ACTIVE_THRESHOLD, CLAUDE_SESSIONS_DIR, HOOKS_POLLING_INTERVAL, VSCODE_WORKSPACES_DIR } from "./constants";
+import { WorkspaceWithStatus } from "./types";
 
 const execAsync = promisify(exec);
 
@@ -104,16 +107,25 @@ async function switchToProject(projectPath: string): Promise<void> {
   vscode.commands.executeCommand("vscode.openFolder", uri, { forceNewWindow: true });
 }
 
-export function activate(context: vscode.ExtensionContext) {
+export async function activate(context: vscode.ExtensionContext) {
   const cpuThreshold = vscode.workspace
     .getConfiguration(CONFIG_SECTION)
     .get<number>("cpuThreshold", CPU_ACTIVE_THRESHOLD);
 
   const detector = new ClaudeProcessDetector(cpuThreshold);
-  const projectManager = new ProjectManager();
+  const registry = new WorkspaceRegistry();
   const hookManager = new HookManager();
-  const treeProvider = new ProjectTreeProvider(detector, projectManager, hookManager, context.extensionPath);
+  const treeProvider = new ProjectTreeProvider(detector, registry, hookManager, context.extensionPath);
   const statusBar = new StatusBarManager(detector, hookManager);
+
+  // Register current workspace in the shared registry
+  const currentFolder = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+  const currentPid = process.pid;
+
+  if (currentFolder) {
+    registry.register(currentPid, currentFolder);
+    treeProvider.setCurrentWindowFolder(currentFolder);
+  }
 
   // Cache hooks state and propagate to components
   let hooksInstalled = false;
@@ -164,21 +176,14 @@ export function activate(context: vscode.ExtensionContext) {
       const uris = await vscode.window.showOpenDialog({
         canSelectFolders: true,
         canSelectFiles: false,
-        canSelectMany: true,
-        openLabel: "Add Project",
+        canSelectMany: false,
+        openLabel: "Open in VS Code",
       });
-      if (uris) {
-        for (const uri of uris) {
-          await projectManager.addProject(uri.fsPath);
-        }
-        treeProvider.refresh();
-      }
-    }),
-
-    vscode.commands.registerCommand("claudeSessions.removeProject", async (item: ProjectWithStatus) => {
-      if (item?.config?.path) {
-        await projectManager.removeProject(item.config.path);
-        treeProvider.refresh();
+      if (uris && uris.length > 0) {
+        const folderPath = uris[0].fsPath;
+        // Use VS Code API — avoids shell injection, new window auto-registers
+        const uri = vscode.Uri.file(folderPath);
+        vscode.commands.executeCommand("vscode.openFolder", uri, { forceNewWindow: true });
       }
     }),
 
@@ -188,58 +193,32 @@ export function activate(context: vscode.ExtensionContext) {
     }),
 
     // Default click: switch to existing window or open new, repositioned in-place
-    vscode.commands.registerCommand("claudeSessions.openProject", async (item: ProjectWithStatus) => {
-      if (item?.config?.path) {
+    vscode.commands.registerCommand("claudeSessions.openProject", async (item: WorkspaceWithStatus) => {
+      if (item?.entry?.folder) {
         const currentFolder = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
-        if (currentFolder === item.config.path) {
+        if (currentFolder === item.entry.folder) {
           vscode.window.showInformationMessage(`Already in ${item.displayName}`);
           return;
         }
-        await switchToProject(item.config.path);
+        await switchToProject(item.entry.folder);
       }
     }),
 
     // Explicit "new window" from context menu
-    vscode.commands.registerCommand("claudeSessions.openProjectNewWindow", (item: ProjectWithStatus) => {
-      if (item?.config?.path) {
-        const uri = vscode.Uri.file(item.config.path);
+    vscode.commands.registerCommand("claudeSessions.openProjectNewWindow", (item: WorkspaceWithStatus) => {
+      if (item?.entry?.folder) {
+        const uri = vscode.Uri.file(item.entry.folder);
         vscode.commands.executeCommand("vscode.openFolder", uri, { forceNewWindow: true });
       }
     }),
 
-    vscode.commands.registerCommand("claudeSessions.renameProject", async (item: ProjectWithStatus) => {
-      if (item?.config?.path) {
-        const newName = await vscode.window.showInputBox({
-          prompt: "Enter display name for this project",
-          value: item.displayName,
-          placeHolder: "Project name",
-        });
-        if (newName !== undefined) {
-          await projectManager.renameProject(item.config.path, newName);
-          treeProvider.refresh();
-        }
-      }
-    }),
-
-    vscode.commands.registerCommand("claudeSessions.openTerminal", (item: ProjectWithStatus) => {
-      if (item?.config?.path) {
+    vscode.commands.registerCommand("claudeSessions.openTerminal", (item: WorkspaceWithStatus) => {
+      if (item?.entry?.folder) {
         const terminal = vscode.window.createTerminal({
           name: item.displayName,
-          cwd: item.config.path,
+          cwd: item.entry.folder,
         });
         terminal.show();
-      }
-    }),
-
-    vscode.commands.registerCommand("claudeSessions.autoDetectProjects", async () => {
-      const detected = await projectManager.autoDetectProjects();
-      treeProvider.refresh();
-      if (detected.length > 0) {
-        vscode.window.showInformationMessage(
-          `Added ${detected.length} project(s) from Claude history`
-        );
-      } else {
-        vscode.window.showInformationMessage("No new projects found");
       }
     }),
 
@@ -286,6 +265,14 @@ export function activate(context: vscode.ExtensionContext) {
     })
   );
 
+  // Heartbeat: update registry entry on each poll cycle
+  if (currentFolder) {
+    const heartbeatInterval = setInterval(() => {
+      registry.heartbeat(currentPid, currentFolder);
+    }, 10000);
+    context.subscriptions.push({ dispose: () => clearInterval(heartbeatInterval) });
+  }
+
   // Start polling
   treeProvider.startPolling();
   statusBar.startPolling();
@@ -322,6 +309,30 @@ export function activate(context: vscode.ExtensionContext) {
     if (refreshDebounceTimer) clearTimeout(refreshDebounceTimer);
   }});
 
+  // Ensure registry directory exists before creating watcher
+  await fs.mkdir(VSCODE_WORKSPACES_DIR, { recursive: true });
+
+  // Watch ~/.claude/vscode-workspaces/ for changes so all windows sync immediately
+  const registryPattern = new vscode.RelativePattern(
+    vscode.Uri.file(VSCODE_WORKSPACES_DIR),
+    "**"
+  );
+  const registryWatcher = vscode.workspace.createFileSystemWatcher(registryPattern);
+  let registryDebounceTimer: ReturnType<typeof setTimeout> | undefined;
+  const debouncedRegistryRefresh = () => {
+    if (registryDebounceTimer) clearTimeout(registryDebounceTimer);
+    registryDebounceTimer = setTimeout(() => {
+      treeProvider.refresh();
+      updateBadge();
+    }, 300);
+  };
+  registryWatcher.onDidCreate(debouncedRegistryRefresh);
+  registryWatcher.onDidDelete(debouncedRegistryRefresh);
+  registryWatcher.onDidChange(debouncedRegistryRefresh);
+  context.subscriptions.push(registryWatcher, {
+    dispose: () => { if (registryDebounceTimer) clearTimeout(registryDebounceTimer); }
+  });
+
   // Suggest hook installation if not installed — show once per version
   hookManager.isInstalled().then((installed) => {
     if (!installed) {
@@ -347,5 +358,11 @@ export function activate(context: vscode.ExtensionContext) {
 }
 
 export function deactivate() {
-  // Cleanup handled by disposables
+  // Best-effort cleanup of our registration file
+  const currentPid = process.pid;
+  try {
+    fsSync.unlinkSync(path.join(VSCODE_WORKSPACES_DIR, `${currentPid}.json`));
+  } catch {
+    // Best effort — stale entries get cleaned up by other instances
+  }
 }
