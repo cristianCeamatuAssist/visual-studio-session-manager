@@ -20,19 +20,27 @@ export interface ProjectConfig {
   name?: string;
 }
 
-export interface ProjectWithStatus {
+export interface WorkspaceEntry {
+  pid: number;
+  folder: string;
+  name: string;
+  lastSeen: number;
+}
+
+export interface WorkspaceWithStatus {
   type: "project";
-  config: ProjectConfig;
+  entry: WorkspaceEntry;
   displayName: string;
   status: ClaudeSessionStatus;
   sessions: ClaudeSession[];
   sessionCount: number;
+  isCurrentWindow: boolean;
 }
 
 export interface SessionItem {
   type: "session";
   session: ClaudeSession;
-  parentProject: ProjectWithStatus;
+  parentProject: WorkspaceWithStatus;
 }
 
-export type TreeNode = ProjectWithStatus | SessionItem;
+export type TreeNode = WorkspaceWithStatus | SessionItem;
