@@ -15,11 +15,6 @@ export interface ClaudeSession {
   cpuPercent: number;
 }
 
-export interface ProjectConfig {
-  path: string;
-  name?: string;
-}
-
 export interface WorkspaceEntry {
   pid: number;
   folder: string;
