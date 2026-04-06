@@ -44,13 +44,8 @@
     "commands": [
       {
         "command": "claudeSessions.addProject",
-        "title": "Add Project",
+        "title": "Open New Project",
         "icon": "$(add)"
-      },
-      {
-        "command": "claudeSessions.removeProject",
-        "title": "Remove Project",
-        "icon": "$(trash)"
       },
       {
         "command": "claudeSessions.refreshProjects",
@@ -65,15 +60,6 @@
         "command": "claudeSessions.openProjectNewWindow",
         "title": "Open in New Window",
         "icon": "$(multiple-windows)"
-      },
-      {
-        "command": "claudeSessions.autoDetectProjects",
-        "title": "Auto-Detect Projects from Claude History",
-        "icon": "$(search)"
-      },
-      {
-        "command": "claudeSessions.renameProject",
-        "title": "Rename Project"
       },
       {
         "command": "claudeSessions.openTerminal",
@@ -92,19 +78,14 @@
     "menus": {
       "view/title": [
         {
-          "command": "claudeSessions.autoDetectProjects",
+          "command": "claudeSessions.addProject",
           "when": "view == claudeSessionsProjects",
           "group": "navigation@1"
         },
         {
-          "command": "claudeSessions.addProject",
-          "when": "view == claudeSessionsProjects",
-          "group": "navigation@2"
-        },
-        {
           "command": "claudeSessions.refreshProjects",
           "when": "view == claudeSessionsProjects",
-          "group": "navigation@3"
+          "group": "navigation@2"
         }
       ],
       "view/item/context": [
@@ -117,54 +98,18 @@
           "command": "claudeSessions.openTerminal",
           "when": "view == claudeSessionsProjects && viewItem == project",
           "group": "inline@2"
-        },
-        {
-          "command": "claudeSessions.removeProject",
-          "when": "view == claudeSessionsProjects && viewItem == project",
-          "group": "inline@3"
-        },
-        {
-          "command": "claudeSessions.renameProject",
-          "when": "view == claudeSessionsProjects && viewItem == project",
-          "group": "context@1"
-        },
-        {
-          "command": "claudeSessions.removeProject",
-          "when": "view == claudeSessionsProjects && viewItem == project",
-          "group": "context@2"
         }
       ]
     },
     "viewsWelcome": [
       {
         "view": "claudeSessionsProjects",
-        "contents": "No projects added yet.\n[Auto-Detect from Claude History](command:claudeSessions.autoDetectProjects)\n[Add Project Folder](command:claudeSessions.addProject)"
+        "contents": "No VS Code windows detected.\n[Open a Project](command:claudeSessions.addProject)"
       }
     ],
     "configuration": {
       "title": "Claude Sessions",
       "properties": {
-        "claudeSessions.projects": {
-          "type": "array",
-          "default": [],
-          "items": {
-            "type": "object",
-            "properties": {
-              "path": {
-                "type": "string",
-                "description": "Absolute path to the project directory"
-              },
-              "name": {
-                "type": "string",
-                "description": "Custom display name (optional, defaults to folder name)"
-              }
-            },
-            "required": [
-              "path"
-            ]
-          },
-          "description": "List of projects to show in the sidebar"
-        },
         "claudeSessions.pollingInterval": {
           "type": "number",
           "default": 3000,
