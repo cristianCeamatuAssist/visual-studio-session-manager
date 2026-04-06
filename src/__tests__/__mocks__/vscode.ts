@@ -95,6 +95,45 @@ class MarkdownString {
   }
 }
 
+class DataTransferItem {
+  readonly value: unknown;
+  constructor(value: unknown) {
+    this.value = value;
+  }
+}
+
+class DataTransfer {
+  private items = new Map<string, DataTransferItem>();
+  get(mimeType: string): DataTransferItem | undefined {
+    return this.items.get(mimeType);
+  }
+  set(mimeType: string, value: DataTransferItem): void {
+    this.items.set(mimeType, value);
+  }
+}
+
+class CancellationTokenSource {
+  token = { isCancellationRequested: false, onCancellationRequested: vi.fn() };
+  cancel = vi.fn();
+  dispose = vi.fn();
+}
+
+function createMockMemento(): { get<T>(key: string, defaultValue?: T): T; update(key: string, value: unknown): Thenable<void>; keys(): readonly string[] } {
+  const store = new Map<string, unknown>();
+  return {
+    get<T>(key: string, defaultValue?: T): T {
+      return (store.has(key) ? store.get(key) : defaultValue) as T;
+    },
+    update(key: string, value: unknown): Thenable<void> {
+      store.set(key, value);
+      return Promise.resolve();
+    },
+    keys(): readonly string[] {
+      return Array.from(store.keys());
+    },
+  };
+}
+
 export function _resetConfigStore(): void {
   configStore.claudeSessions = {
     pollingInterval: 3000,
@@ -115,4 +154,8 @@ export {
   ThemeIcon,
   ThemeColor,
   MarkdownString,
+  DataTransferItem,
+  DataTransfer,
+  CancellationTokenSource,
+  createMockMemento,
 };

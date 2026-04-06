@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import * as vscode from "vscode";
+import { createMockMemento, DataTransfer, DataTransferItem, CancellationTokenSource } from "./__mocks__/vscode";
 import { ProjectTreeProvider } from "../projectTreeProvider";
 import { ClaudeSessionStatus, WorkspaceWithStatus, WorkspaceEntry } from "../types";
 
@@ -46,17 +47,20 @@ describe("ProjectTreeProvider", () => {
   let mockDetector: ReturnType<typeof createMockDetector>;
   let mockRegistry: ReturnType<typeof createMockRegistry>;
   let mockHookManager: ReturnType<typeof createMockHookManager>;
+  let mockGlobalState: ReturnType<typeof createMockMemento>;
 
   beforeEach(() => {
     vi.clearAllMocks();
     mockDetector = createMockDetector();
     mockRegistry = createMockRegistry();
     mockHookManager = createMockHookManager();
+    mockGlobalState = createMockMemento();
     provider = new ProjectTreeProvider(
       mockDetector as never,
       mockRegistry as never,
       mockHookManager as never,
-      "/ext/path"
+      "/ext/path",
+      mockGlobalState as never
     );
   });
 
@@ -85,7 +89,8 @@ describe("ProjectTreeProvider", () => {
       expect(proj.sessionCount).toBe(1);
     });
 
-    it("sorts by status order: Active < Waiting < Done < Inactive", async () => {
+    it("returns projects in saved order", async () => {
+      mockGlobalState.update("projectOrder", ["/active", "/done", "/waiting", "/inactive"]);
       mockRegistry.getActiveWorkspaces.mockResolvedValue([
         makeEntry({ pid: 1, folder: "/inactive", name: "d-inactive" }),
         makeEntry({ pid: 2, folder: "/active", name: "b-active" }),
@@ -102,13 +107,14 @@ describe("ProjectTreeProvider", () => {
 
       const children = await provider.getChildren();
       const names = children.map((c) => (c as WorkspaceWithStatus).displayName);
-      expect(names).toEqual(["b-active", "c-waiting", "a-done", "d-inactive"]);
+      expect(names).toEqual(["b-active", "a-done", "c-waiting", "d-inactive"]);
     });
 
-    it("sorts alphabetically within the same status", async () => {
+    it("appends new projects at the bottom", async () => {
+      mockGlobalState.update("projectOrder", ["/alpha"]);
       mockRegistry.getActiveWorkspaces.mockResolvedValue([
-        makeEntry({ pid: 1, folder: "/zeta", name: "zeta" }),
-        makeEntry({ pid: 2, folder: "/alpha", name: "alpha" }),
+        makeEntry({ pid: 1, folder: "/alpha", name: "alpha" }),
+        makeEntry({ pid: 2, folder: "/zeta", name: "zeta" }),
       ]);
       mockDetector.getStatusForProject.mockReturnValue({
         status: ClaudeSessionStatus.Inactive,
@@ -118,6 +124,24 @@ describe("ProjectTreeProvider", () => {
       const children = await provider.getChildren();
       const names = children.map((c) => (c as WorkspaceWithStatus).displayName);
       expect(names).toEqual(["alpha", "zeta"]);
+    });
+
+    it("prunes stale entries from saved order", async () => {
+      mockGlobalState.update("projectOrder", ["/removed", "/alpha", "/zeta"]);
+      mockRegistry.getActiveWorkspaces.mockResolvedValue([
+        makeEntry({ pid: 1, folder: "/alpha", name: "alpha" }),
+        makeEntry({ pid: 2, folder: "/zeta", name: "zeta" }),
+      ]);
+      mockDetector.getStatusForProject.mockReturnValue({
+        status: ClaudeSessionStatus.Inactive,
+        sessions: [],
+      });
+
+      const children = await provider.getChildren();
+      const names = children.map((c) => (c as WorkspaceWithStatus).displayName);
+      expect(names).toEqual(["alpha", "zeta"]);
+      // Saved order should be cleaned
+      expect(mockGlobalState.get("projectOrder")).toEqual(["/alpha", "/zeta"]);
     });
   });
 
@@ -216,6 +240,69 @@ describe("ProjectTreeProvider", () => {
     it("shows 'No session' for Inactive status", async () => {
       const desc = await getDescription(ClaudeSessionStatus.Inactive, 0);
       expect(desc).toBe("No session");
+    });
+  });
+
+  describe("drag and drop", () => {
+    const token = new CancellationTokenSource().token;
+
+    async function setupProjects(folders: string[]): Promise<WorkspaceWithStatus[]> {
+      const order = folders;
+      mockGlobalState.update("projectOrder", order);
+      mockRegistry.getActiveWorkspaces.mockResolvedValue(
+        folders.map((f, i) => makeEntry({ pid: i + 1, folder: f, name: f.slice(1) }))
+      );
+      mockDetector.getStatusForProject.mockReturnValue({
+        status: ClaudeSessionStatus.Inactive,
+        sessions: [],
+      });
+      const children = await provider.getChildren();
+      return children as WorkspaceWithStatus[];
+    }
+
+    it("handleDrag sets project items in dataTransfer", async () => {
+      const projects = await setupProjects(["/a", "/b"]);
+      const dt = new DataTransfer();
+      provider.handleDrag(projects, dt as never, token as never);
+      const item = dt.get("application/vnd.code.tree.claudesessionsprojects");
+      expect(item).toBeDefined();
+      expect(item!.value).toEqual(projects);
+    });
+
+    it("handleDrag ignores session items", async () => {
+      const projects = await setupProjects(["/a"]);
+      const sessionChildren = await provider.getChildren(projects[0]);
+      const dt = new DataTransfer();
+      provider.handleDrag(sessionChildren, dt as never, token as never);
+      const item = dt.get("application/vnd.code.tree.claudesessionsprojects");
+      expect(item).toBeUndefined();
+    });
+
+    it("handleDrop moves project before target", async () => {
+      const projects = await setupProjects(["/a", "/b", "/c"]);
+      const dt = new DataTransfer();
+      dt.set("application/vnd.code.tree.claudesessionsprojects", new DataTransferItem([projects[2]]));
+
+      await provider.handleDrop(projects[0], dt as never, token as never);
+      expect(mockGlobalState.get("projectOrder")).toEqual(["/c", "/a", "/b"]);
+    });
+
+    it("handleDrop appends to end when target is undefined", async () => {
+      const projects = await setupProjects(["/a", "/b", "/c"]);
+      const dt = new DataTransfer();
+      dt.set("application/vnd.code.tree.claudesessionsprojects", new DataTransferItem([projects[0]]));
+
+      await provider.handleDrop(undefined, dt as never, token as never);
+      expect(mockGlobalState.get("projectOrder")).toEqual(["/b", "/c", "/a"]);
+    });
+
+    it("handleDrop preserves relative order of multiple dragged items", async () => {
+      const projects = await setupProjects(["/a", "/b", "/c", "/d"]);
+      const dt = new DataTransfer();
+      dt.set("application/vnd.code.tree.claudesessionsprojects", new DataTransferItem([projects[0], projects[2]]));
+
+      await provider.handleDrop(projects[3], dt as never, token as never);
+      expect(mockGlobalState.get("projectOrder")).toEqual(["/b", "/a", "/c", "/d"]);
     });
   });
 

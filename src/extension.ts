@@ -115,7 +115,7 @@ export async function activate(context: vscode.ExtensionContext) {
   const detector = new ClaudeProcessDetector(cpuThreshold);
   const registry = new WorkspaceRegistry();
   const hookManager = new HookManager();
-  const treeProvider = new ProjectTreeProvider(detector, registry, hookManager, context.extensionPath);
+  const treeProvider = new ProjectTreeProvider(detector, registry, hookManager, context.extensionPath, context.globalState);
   const statusBar = new StatusBarManager(detector, hookManager);
 
   // Register current workspace in the shared registry
@@ -152,6 +152,7 @@ export async function activate(context: vscode.ExtensionContext) {
   const treeView = vscode.window.createTreeView("claudeSessionsProjects", {
     treeDataProvider: treeProvider,
     showCollapseAll: false,
+    dragAndDropController: treeProvider,
   });
 
   // Auto-open the Claude Sessions sidebar so it's ready in every window

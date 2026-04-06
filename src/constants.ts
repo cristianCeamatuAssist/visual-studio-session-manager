@@ -25,3 +25,6 @@ export const DONE_MARKER_TTL = 5 * 60 * 1000;
 
 /** Directory where VS Code window instances register themselves for auto-discovery */
 export const VSCODE_WORKSPACES_DIR = path.join(os.homedir(), ".claude", "vscode-workspaces");
+
+/** Key used in VS Code globalState to persist user's custom project order */
+export const PROJECT_ORDER_KEY = "projectOrder";

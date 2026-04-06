@@ -4,17 +4,22 @@ import { ClaudeProcessDetector } from "./claudeProcessDetector";
 import { WorkspaceRegistry } from "./workspaceRegistry";
 import { HookManager } from "./hookManager";
 import { ClaudeSessionStatus, WorkspaceWithStatus, SessionItem, TreeNode } from "./types";
-import { CONFIG_SECTION, DEFAULT_POLLING_INTERVAL } from "./constants";
+import { CONFIG_SECTION, DEFAULT_POLLING_INTERVAL, PROJECT_ORDER_KEY } from "./constants";
 
-export class ProjectTreeProvider implements vscode.TreeDataProvider<TreeNode>, vscode.Disposable {
+export class ProjectTreeProvider
+  implements vscode.TreeDataProvider<TreeNode>, vscode.TreeDragAndDropController<TreeNode>, vscode.Disposable {
   private _onDidChangeTreeData = new vscode.EventEmitter<TreeNode | undefined | null>();
   readonly onDidChangeTreeData = this._onDidChangeTreeData.event;
+
+  readonly dropMimeTypes: readonly string[] = ["application/vnd.code.tree.claudesessionsprojects"];
+  readonly dragMimeTypes: readonly string[] = ["application/vnd.code.tree.claudesessionsprojects"];
 
   private pollingTimer: ReturnType<typeof setInterval> | undefined;
   private detector: ClaudeProcessDetector;
   private registry: WorkspaceRegistry;
   private hookManager: HookManager;
   private extensionPath: string;
+  private globalState: vscode.Memento;
   private hooksInstalled = false;
   private currentWindowFolder: string | undefined;
 
@@ -22,12 +27,14 @@ export class ProjectTreeProvider implements vscode.TreeDataProvider<TreeNode>, v
     detector: ClaudeProcessDetector,
     registry: WorkspaceRegistry,
     hookManager: HookManager,
-    extensionPath: string
+    extensionPath: string,
+    globalState: vscode.Memento
   ) {
     this.detector = detector;
     this.registry = registry;
     this.hookManager = hookManager;
     this.extensionPath = extensionPath;
+    this.globalState = globalState;
   }
 
   setCurrentWindowFolder(folder: string | undefined): void {
@@ -123,20 +130,97 @@ export class ProjectTreeProvider implements vscode.TreeDataProvider<TreeNode>, v
       };
     });
 
-    const statusOrder = {
-      [ClaudeSessionStatus.Active]: 0,
-      [ClaudeSessionStatus.Waiting]: 1,
-      [ClaudeSessionStatus.Done]: 2,
-      [ClaudeSessionStatus.Inactive]: 3,
-    };
+    return this.applyOrder(workspacesWithStatus);
+  }
 
-    workspacesWithStatus.sort((a, b) => {
-      const statusDiff = statusOrder[a.status] - statusOrder[b.status];
-      if (statusDiff !== 0) return statusDiff;
-      return a.displayName.localeCompare(b.displayName);
-    });
+  handleDrag(source: readonly TreeNode[], dataTransfer: vscode.DataTransfer, _token: vscode.CancellationToken): void {
+    const projects = source.filter((node): node is WorkspaceWithStatus => node.type === "project");
+    if (projects.length === 0) {
+      return;
+    }
+    dataTransfer.set(
+      "application/vnd.code.tree.claudesessionsprojects",
+      new vscode.DataTransferItem(projects)
+    );
+  }
 
-    return workspacesWithStatus;
+  async handleDrop(target: TreeNode | undefined, dataTransfer: vscode.DataTransfer, _token: vscode.CancellationToken): Promise<void> {
+    const transferItem = dataTransfer.get("application/vnd.code.tree.claudesessionsprojects");
+    if (!transferItem) {
+      return;
+    }
+
+    const draggedProjects: WorkspaceWithStatus[] = transferItem.value;
+    if (!draggedProjects || draggedProjects.length === 0) {
+      return;
+    }
+
+    const currentOrder = this.getSavedOrder();
+    if (currentOrder.length === 0) {
+      return;
+    }
+
+    const draggedFolders = new Set(draggedProjects.map((p) => p.entry.folder));
+    const withoutDragged = currentOrder.filter((f) => !draggedFolders.has(f));
+
+    let insertIndex: number;
+    if (target === undefined || target.type === "session") {
+      insertIndex = withoutDragged.length;
+    } else {
+      const targetFolder = target.entry.folder;
+      const targetIndex = withoutDragged.indexOf(targetFolder);
+      insertIndex = targetIndex >= 0 ? targetIndex : withoutDragged.length;
+    }
+
+    const draggedInOrder = currentOrder.filter((f) => draggedFolders.has(f));
+    const newOrder = [
+      ...withoutDragged.slice(0, insertIndex),
+      ...draggedInOrder,
+      ...withoutDragged.slice(insertIndex),
+    ];
+
+    await this.saveOrder(newOrder);
+    this.refresh();
+  }
+
+  private getSavedOrder(): string[] {
+    return this.globalState.get<string[]>(PROJECT_ORDER_KEY, []);
+  }
+
+  private async saveOrder(folders: string[]): Promise<void> {
+    await this.globalState.update(PROJECT_ORDER_KEY, folders);
+  }
+
+  private applyOrder(projects: WorkspaceWithStatus[]): WorkspaceWithStatus[] {
+    const savedOrder = this.getSavedOrder();
+    const byFolder = new Map<string, WorkspaceWithStatus>();
+    for (const p of projects) {
+      byFolder.set(p.entry.folder, p);
+    }
+
+    const ordered: WorkspaceWithStatus[] = [];
+
+    for (const folder of savedOrder) {
+      const project = byFolder.get(folder);
+      if (project) {
+        ordered.push(project);
+        byFolder.delete(folder);
+      }
+    }
+
+    for (const project of byFolder.values()) {
+      ordered.push(project);
+    }
+
+    const cleanOrder = ordered.map((p) => p.entry.folder);
+    if (
+      cleanOrder.length !== savedOrder.length ||
+      cleanOrder.some((f, i) => f !== savedOrder[i])
+    ) {
+      this.saveOrder(cleanOrder);
+    }
+
+    return ordered;
   }
 
   private getProjectTreeItem(element: WorkspaceWithStatus): vscode.TreeItem {
