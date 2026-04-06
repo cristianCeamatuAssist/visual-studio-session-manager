@@ -336,7 +336,7 @@ export async function activate(context: vscode.ExtensionContext) {
   // Suggest hook installation if not installed — show once per version
   hookManager.isInstalled().then((installed) => {
     if (!installed) {
-      const hasShownKey = "hookSuggestionShown_v0.4.0";
+      const hasShownKey = "hookSuggestionShown_v0.5.0";
       const hasShown = context.globalState.get<boolean>(hasShownKey, false);
       if (!hasShown) {
         context.globalState.update(hasShownKey, true);
