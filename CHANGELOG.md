@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.6.1] - 2026-04-06
+
+### Fixed
+
+- Fix hook script not parsing session_id from JSON payloads with spaces after colons, causing sessions to permanently show "Working" instead of transitioning to "Needs Input" or "Done"
+
 ## [0.1.0] - 2026-03-27
 
 ### Added

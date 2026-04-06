@@ -37,7 +37,7 @@ DONE_PREFIX="${DONE_MARKER_PREFIX}"
 
 # Extract session_id from stdin JSON (hook event payload)
 INPUT=$(cat)
-SESSION_ID=$(echo "$INPUT" | grep -o '"session_id":"[^"]*"' | head -1 | cut -d'"' -f4)
+SESSION_ID=$(echo "$INPUT" | grep -o '"session_id" *: *"[^"]*"' | head -1 | cut -d'"' -f4)
 
 # Fallback to PPID if session_id not available
 MARKER_ID="\${SESSION_ID:-$PPID}"
