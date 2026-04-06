@@ -6,6 +6,7 @@ vi.mock("fs/promises", () => ({
   writeFile: vi.fn(),
   unlink: vi.fn(),
   access: vi.fn(),
+  stat: vi.fn(),
 }));
 
 import * as fs from "fs/promises";
@@ -49,7 +50,7 @@ describe("HookManager", () => {
       expect(result).toBe(false);
     });
 
-    it("returns true when our hook is present", async () => {
+    it("returns false when only some hooks are present (requires all 5)", async () => {
       mockedReadFile.mockResolvedValue(
         JSON.stringify({
           hooks: {
@@ -63,19 +64,18 @@ describe("HookManager", () => {
         })
       );
       const result = await hookManager.isInstalled();
-      expect(result).toBe(true);
+      expect(result).toBe(false);
     });
 
-    it("returns true when UserPromptSubmit hook is present (even if Stop is missing)", async () => {
+    it("returns true when all 5 hooks are present", async () => {
       mockedReadFile.mockResolvedValue(
         JSON.stringify({
           hooks: {
-            UserPromptSubmit: [
-              {
-                matcher: "",
-                hooks: [{ type: "command", command: "/path/to/vscode-session-manager-hook.sh start" }],
-              },
-            ],
+            Stop: [{ matcher: "", hooks: [{ type: "command", command: "/path/to/vscode-session-manager-hook.sh stop" }] }],
+            PreToolUse: [{ matcher: "", hooks: [{ type: "command", command: "/path/to/vscode-session-manager-hook.sh resume" }] }],
+            UserPromptSubmit: [{ matcher: "", hooks: [{ type: "command", command: "/path/to/vscode-session-manager-hook.sh start" }] }],
+            Notification: [{ matcher: "idle_prompt", hooks: [{ type: "command", command: "/path/to/vscode-session-manager-hook.sh stop" }] }],
+            SessionEnd: [{ matcher: "", hooks: [{ type: "command", command: "/path/to/vscode-session-manager-hook.sh end" }] }],
           },
         })
       );
