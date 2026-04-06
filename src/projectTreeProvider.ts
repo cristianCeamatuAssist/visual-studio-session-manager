@@ -1,9 +1,9 @@
 import * as vscode from "vscode";
 import * as path from "path";
 import { ClaudeProcessDetector } from "./claudeProcessDetector";
-import { ProjectManager } from "./projectManager";
+import { WorkspaceRegistry } from "./workspaceRegistry";
 import { HookManager } from "./hookManager";
-import { ClaudeSessionStatus, ProjectWithStatus, SessionItem, TreeNode } from "./types";
+import { ClaudeSessionStatus, WorkspaceWithStatus, SessionItem, TreeNode } from "./types";
 import { CONFIG_SECTION, DEFAULT_POLLING_INTERVAL } from "./constants";
 
 export class ProjectTreeProvider implements vscode.TreeDataProvider<TreeNode>, vscode.Disposable {
@@ -12,21 +12,26 @@ export class ProjectTreeProvider implements vscode.TreeDataProvider<TreeNode>, v
 
   private pollingTimer: ReturnType<typeof setInterval> | undefined;
   private detector: ClaudeProcessDetector;
-  private projectManager: ProjectManager;
+  private registry: WorkspaceRegistry;
   private hookManager: HookManager;
   private extensionPath: string;
   private hooksInstalled = false;
+  private currentWindowFolder: string | undefined;
 
   constructor(
     detector: ClaudeProcessDetector,
-    projectManager: ProjectManager,
+    registry: WorkspaceRegistry,
     hookManager: HookManager,
     extensionPath: string
   ) {
     this.detector = detector;
-    this.projectManager = projectManager;
+    this.registry = registry;
     this.hookManager = hookManager;
     this.extensionPath = extensionPath;
+  }
+
+  setCurrentWindowFolder(folder: string | undefined): void {
+    this.currentWindowFolder = folder;
   }
 
   setHooksInstalled(installed: boolean): void {
@@ -80,15 +85,13 @@ export class ProjectTreeProvider implements vscode.TreeDataProvider<TreeNode>, v
       }));
     }
 
-    // Root level = projects
-    const projects = this.projectManager.getProjects();
-    if (projects.length === 0) {
+    // Root level = active workspaces from registry
+    const workspaces = await this.registry.getActiveWorkspaces();
+    if (workspaces.length === 0) {
       return [];
     }
 
     const sessions = await this.detector.detectSessions(this.hooksInstalled);
-
-    // Get hook markers for accurate status detection
     const hookWaitingMarkers = await this.hookManager.getWaitingMarkers();
     const hookDoneMarkers = await this.hookManager.getDoneMarkers();
 
@@ -97,21 +100,26 @@ export class ProjectTreeProvider implements vscode.TreeDataProvider<TreeNode>, v
     const aliveSessionIds = new Set(sessions.map((s) => s.sessionId));
     this.hookManager.cleanStaleMarkers(alivePids, aliveSessionIds);
 
-    const projectsWithStatus: ProjectWithStatus[] = projects.map((config) => {
+    const workspacesWithStatus: WorkspaceWithStatus[] = workspaces.map((entry) => {
       const { status, sessions: matchingSessions } = this.detector.getStatusForProject(
-        config.path,
+        entry.folder,
         sessions,
         hookWaitingMarkers,
         this.hooksInstalled,
         hookDoneMarkers
       );
+
+      const normalizedCurrent = this.currentWindowFolder?.replace(/\/+$/, "");
+      const normalizedEntry = entry.folder.replace(/\/+$/, "");
+
       return {
         type: "project" as const,
-        config,
-        displayName: config.name ?? path.basename(config.path),
+        entry,
+        displayName: entry.name,
         status,
         sessions: matchingSessions,
         sessionCount: matchingSessions.length,
+        isCurrentWindow: normalizedCurrent === normalizedEntry,
       };
     });
 
@@ -122,23 +130,26 @@ export class ProjectTreeProvider implements vscode.TreeDataProvider<TreeNode>, v
       [ClaudeSessionStatus.Inactive]: 3,
     };
 
-    projectsWithStatus.sort((a, b) => {
+    workspacesWithStatus.sort((a, b) => {
       const statusDiff = statusOrder[a.status] - statusOrder[b.status];
       if (statusDiff !== 0) return statusDiff;
       return a.displayName.localeCompare(b.displayName);
     });
 
-    return projectsWithStatus;
+    return workspacesWithStatus;
   }
 
-  private getProjectTreeItem(element: ProjectWithStatus): vscode.TreeItem {
-    // Expandable if has sessions, otherwise no children
+  private getProjectTreeItem(element: WorkspaceWithStatus): vscode.TreeItem {
     const collapsible =
       element.sessionCount > 0
         ? vscode.TreeItemCollapsibleState.Collapsed
         : vscode.TreeItemCollapsibleState.None;
 
-    const item = new vscode.TreeItem(element.displayName, collapsible);
+    const label = element.isCurrentWindow
+      ? `${element.displayName} (this window)`
+      : element.displayName;
+
+    const item = new vscode.TreeItem(label, collapsible);
 
     const iconFile = this.getStatusIconFile(element.status);
     item.iconPath = {
@@ -150,11 +161,14 @@ export class ProjectTreeProvider implements vscode.TreeDataProvider<TreeNode>, v
     item.tooltip = this.buildProjectTooltip(element);
     item.contextValue = "project";
 
-    item.command = {
-      command: "claudeSessions.openProject",
-      title: "Open Project",
-      arguments: [element],
-    };
+    // Only allow clicking to switch if it's NOT the current window
+    if (!element.isCurrentWindow) {
+      item.command = {
+        command: "claudeSessions.openProject",
+        title: "Open Project",
+        arguments: [element],
+      };
+    }
 
     return item;
   }
@@ -224,7 +238,7 @@ export class ProjectTreeProvider implements vscode.TreeDataProvider<TreeNode>, v
     }
   }
 
-  private getStatusDescription(project: ProjectWithStatus): string {
+  private getStatusDescription(project: WorkspaceWithStatus): string {
     switch (project.status) {
       case ClaudeSessionStatus.Active: {
         const countStr = project.sessionCount > 1 ? ` (${project.sessionCount} sessions)` : "";
@@ -247,10 +261,10 @@ export class ProjectTreeProvider implements vscode.TreeDataProvider<TreeNode>, v
     }
   }
 
-  private buildProjectTooltip(project: ProjectWithStatus): vscode.MarkdownString {
+  private buildProjectTooltip(project: WorkspaceWithStatus): vscode.MarkdownString {
     const md = new vscode.MarkdownString();
     md.appendMarkdown(`**${project.displayName}**\n\n`);
-    md.appendMarkdown(`Path: \`${project.config.path}\`\n\n`);
+    md.appendMarkdown(`Path: \`${project.entry.folder}\`\n\n`);
 
     if (project.sessions.length > 0) {
       md.appendMarkdown(`**${project.sessionCount} session(s)** - click to expand`);

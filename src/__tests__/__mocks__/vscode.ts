@@ -59,11 +59,11 @@ const Uri = {
   file: (path: string) => ({ fsPath: path, scheme: "file" }),
 };
 
-const EventEmitter = vi.fn().mockImplementation(() => ({
-  event: vi.fn(),
-  fire: vi.fn(),
-  dispose: vi.fn(),
-}));
+class EventEmitter {
+  event = vi.fn();
+  fire = vi.fn();
+  dispose = vi.fn();
+}
 
 const TreeItemCollapsibleState = {
   None: 0,
