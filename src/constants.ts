@@ -14,14 +14,8 @@ export const DEBOUNCE_READINGS = 3;
 /** Prefix for hook-created waiting marker files in sessions dir */
 export const WAITING_MARKER_PREFIX = ".waiting_";
 
-/** Prefix for hook-created done marker files in sessions dir */
-export const DONE_MARKER_PREFIX = ".done_";
-
 /** Polling interval when hooks are installed (less frequent since file watcher handles immediacy) */
 export const HOOKS_POLLING_INTERVAL = 5000;
-
-/** How long to keep .done_ markers after a session ends (ms) */
-export const DONE_MARKER_TTL = 5 * 60 * 1000;
 
 /** Directory where VS Code window instances register themselves for auto-discovery */
 export const VSCODE_WORKSPACES_DIR = path.join(os.homedir(), ".claude", "vscode-workspaces");

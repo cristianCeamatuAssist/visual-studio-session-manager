@@ -100,7 +100,6 @@ export class ProjectTreeProvider
 
     const sessions = await this.detector.detectSessions(this.hooksInstalled);
     const hookWaitingMarkers = await this.hookManager.getWaitingMarkers();
-    const hookDoneMarkers = await this.hookManager.getDoneMarkers();
 
     // Clean up stale markers
     const alivePids = new Set(sessions.map((s) => s.pid));
@@ -111,8 +110,7 @@ export class ProjectTreeProvider
         entry.folder,
         sessions,
         hookWaitingMarkers,
-        this.hooksInstalled,
-        hookDoneMarkers
+        this.hooksInstalled
       );
 
       const normalizedCurrent = this.currentWindowFolder?.replace(/\/+$/, "");
@@ -234,7 +232,7 @@ export class ProjectTreeProvider
 
     const item = new vscode.TreeItem(label, collapsible);
 
-    const iconFile = this.getStatusIconFile(element.status);
+    const iconFile = this.getStatusIconFile(element.status, element.isCurrentWindow);
     item.iconPath = {
       light: vscode.Uri.file(path.join(this.extensionPath, "resources", iconFile)),
       dark: vscode.Uri.file(path.join(this.extensionPath, "resources", iconFile)),
@@ -268,8 +266,7 @@ export class ProjectTreeProvider
       const parentStatus = element.parentProject.status;
       const statusConfig = {
         [ClaudeSessionStatus.Active]: { icon: "pulse", color: "terminal.ansiYellow", label: "Working" },
-        [ClaudeSessionStatus.Waiting]: { icon: "bell", color: "terminal.ansiRed", label: "Needs input" },
-        [ClaudeSessionStatus.Done]: { icon: "check", color: "terminal.ansiGreen", label: "Done" },
+        [ClaudeSessionStatus.Waiting]: { icon: "check", color: "terminal.ansiGreen", label: "Needs input" },
         [ClaudeSessionStatus.Inactive]: { icon: "circle-outline", color: "terminal.ansiBrightBlack", label: "Inactive" },
       };
       const cfg = statusConfig[parentStatus];
@@ -308,16 +305,15 @@ export class ProjectTreeProvider
     return item;
   }
 
-  private getStatusIconFile(status: ClaudeSessionStatus): string {
+  private getStatusIconFile(status: ClaudeSessionStatus, focused = false): string {
+    const suffix = focused ? "-focused" : "";
     switch (status) {
       case ClaudeSessionStatus.Active:
-        return "status-active.svg";
+        return `status-active${suffix}.svg`;
       case ClaudeSessionStatus.Waiting:
-        return "status-waiting.svg";
-      case ClaudeSessionStatus.Done:
-        return "status-done.svg";
+        return `status-waiting${suffix}.svg`;
       case ClaudeSessionStatus.Inactive:
-        return "status-inactive.svg";
+        return `status-inactive${suffix}.svg`;
     }
   }
 
@@ -334,10 +330,6 @@ export class ProjectTreeProvider
       case ClaudeSessionStatus.Waiting: {
         const countStr = project.sessionCount > 1 ? ` (${project.sessionCount} sessions)` : "";
         return `Needs input${countStr}`;
-      }
-      case ClaudeSessionStatus.Done: {
-        const countStr = project.sessionCount > 1 ? ` (${project.sessionCount} sessions)` : "";
-        return `Done${countStr}`;
       }
       case ClaudeSessionStatus.Inactive:
         return "No session";

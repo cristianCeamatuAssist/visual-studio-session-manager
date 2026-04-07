@@ -2,7 +2,7 @@
   "name": "vscode-session-manager",
   "displayName": "Visual Studio Session Manager",
   "description": "Monitor and switch between VS Code projects with Claude Code CLI session status indicators",
-  "version": "0.6.2",
+  "version": "0.7.0",
   "publisher": "cristianCeamatuAssist",
   "license": "MIT",
   "repository": {

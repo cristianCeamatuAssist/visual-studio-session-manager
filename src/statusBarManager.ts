@@ -36,60 +36,40 @@ export class StatusBarManager implements vscode.Disposable {
     const totalSessions = sessions.length;
 
     if (totalSessions === 0) {
-      // Check for done markers (recently completed sessions)
-      if (this.hooksInstalled) {
-        const doneMarkers = await this.hookManager.getDoneMarkers();
-        if (doneMarkers.size > 0) {
-          this.statusBarItem.text = `$(check) Claude: done`;
-          this.statusBarItem.tooltip = `${doneMarkers.size} session(s) completed`;
-          this.statusBarItem.color = new vscode.ThemeColor("terminal.ansiGreen");
-          this.statusBarItem.show();
-          return;
-        }
-      }
       this.statusBarItem.text = "$(terminal) Claude: 0";
       this.statusBarItem.tooltip = "No active Claude sessions";
       this.statusBarItem.color = undefined;
     } else if (this.hooksInstalled) {
-      // Hooks mode: 3-state detection using markers
+      // Hooks mode: marker-based detection
       const waitingMarkers = await this.hookManager.getWaitingMarkers();
-      const doneMarkers = await this.hookManager.getDoneMarkers();
 
       const waitingCount = sessions.filter(
-        (s) => waitingMarkers.has(String(s.pid)) || waitingMarkers.has(s.sessionId)
+        (s) => waitingMarkers.has(String(s.pid))
       ).length;
-      const doneCount = sessions.filter(
-        (s) => doneMarkers.has(String(s.pid)) || doneMarkers.has(s.sessionId)
-      ).length;
-      const activeCount = totalSessions - waitingCount - doneCount;
+      const activeCount = totalSessions - waitingCount;
 
       if (activeCount > 0) {
         // Orange: at least one session is working
         this.statusBarItem.text = `$(pulse) Claude: ${totalSessions} working`;
-        this.statusBarItem.tooltip = `${activeCount} working, ${waitingCount} need input, ${doneCount} done`;
+        this.statusBarItem.tooltip = `${activeCount} working, ${waitingCount} need input`;
         this.statusBarItem.color = new vscode.ThemeColor("terminal.ansiYellow");
-      } else if (waitingCount > 0) {
-        // Red: all sessions are waiting for input
-        this.statusBarItem.text = `$(bell) Claude: ${waitingCount} need input`;
-        this.statusBarItem.tooltip = `${waitingCount} session(s) need your input`;
-        this.statusBarItem.color = new vscode.ThemeColor("terminal.ansiRed");
       } else {
-        // Green: all sessions are done
-        this.statusBarItem.text = `$(check) Claude: ${doneCount} done`;
-        this.statusBarItem.tooltip = `${doneCount} session(s) completed`;
+        // Green: all sessions need input
+        this.statusBarItem.text = `$(check) Claude: ${waitingCount} need input`;
+        this.statusBarItem.tooltip = `${waitingCount} session(s) need your input`;
         this.statusBarItem.color = new vscode.ThemeColor("terminal.ansiGreen");
       }
     } else {
-      // CPU mode fallback: orange = working, red = needs input
+      // CPU mode fallback: orange = working, green = needs input
       const activeSessions = this.detector.getActiveCount(sessions);
       if (activeSessions > 0) {
         this.statusBarItem.text = `$(pulse) Claude: ${totalSessions} working`;
         this.statusBarItem.tooltip = `${activeSessions} working, ${totalSessions - activeSessions} need input`;
         this.statusBarItem.color = new vscode.ThemeColor("terminal.ansiYellow");
       } else {
-        this.statusBarItem.text = `$(bell) Claude: ${totalSessions} need input`;
+        this.statusBarItem.text = `$(check) Claude: ${totalSessions} need input`;
         this.statusBarItem.tooltip = `${totalSessions} session(s) need your input`;
-        this.statusBarItem.color = new vscode.ThemeColor("terminal.ansiRed");
+        this.statusBarItem.color = new vscode.ThemeColor("terminal.ansiGreen");
       }
     }
 

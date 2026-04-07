@@ -27,7 +27,6 @@ function createMockRegistry() {
 function createMockHookManager() {
   return {
     getWaitingMarkers: vi.fn().mockResolvedValue(new Set()),
-    getDoneMarkers: vi.fn().mockResolvedValue(new Set()),
     cleanStaleMarkers: vi.fn(),
   };
 }
@@ -90,24 +89,24 @@ describe("ProjectTreeProvider", () => {
     });
 
     it("returns projects in saved order", async () => {
-      mockGlobalState.update("projectOrder", ["/active", "/done", "/waiting", "/inactive"]);
+      mockGlobalState.update("projectOrder", ["/active", "/other", "/waiting", "/inactive"]);
       mockRegistry.getActiveWorkspaces.mockResolvedValue([
         makeEntry({ pid: 1, folder: "/inactive", name: "d-inactive" }),
         makeEntry({ pid: 2, folder: "/active", name: "b-active" }),
         makeEntry({ pid: 3, folder: "/waiting", name: "c-waiting" }),
-        makeEntry({ pid: 4, folder: "/done", name: "a-done" }),
+        makeEntry({ pid: 4, folder: "/other", name: "a-other" }),
       ]);
 
       mockDetector.getStatusForProject.mockImplementation((folder: string) => {
         if (folder === "/active") return { status: ClaudeSessionStatus.Active, sessions: [{ pid: 2 }] };
         if (folder === "/waiting") return { status: ClaudeSessionStatus.Waiting, sessions: [{ pid: 3 }] };
-        if (folder === "/done") return { status: ClaudeSessionStatus.Done, sessions: [{ pid: 4 }] };
+        if (folder === "/other") return { status: ClaudeSessionStatus.Active, sessions: [{ pid: 4 }] };
         return { status: ClaudeSessionStatus.Inactive, sessions: [] };
       });
 
       const children = await provider.getChildren();
       const names = children.map((c) => (c as WorkspaceWithStatus).displayName);
-      expect(names).toEqual(["b-active", "a-done", "c-waiting", "d-inactive"]);
+      expect(names).toEqual(["b-active", "a-other", "c-waiting", "d-inactive"]);
     });
 
     it("appends new projects at the bottom", async () => {
@@ -230,11 +229,6 @@ describe("ProjectTreeProvider", () => {
     it("shows 'Needs input' for Waiting status", async () => {
       const desc = await getDescription(ClaudeSessionStatus.Waiting, 1);
       expect(desc).toBe("Needs input");
-    });
-
-    it("shows 'Done' for Done status", async () => {
-      const desc = await getDescription(ClaudeSessionStatus.Done, 1);
-      expect(desc).toBe("Done");
     });
 
     it("shows 'No session' for Inactive status", async () => {

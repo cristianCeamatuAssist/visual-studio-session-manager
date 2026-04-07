@@ -21,14 +21,16 @@ code --install-extension vscode-session-manager-X.Y.Z.vsix --force
 
 ## Architecture
 
-3-state color system for Claude Code session status:
+2-state color system for Claude Code session status:
 - **Orange** (terminal.ansiYellow) = working (no marker file)
-- **Red** (terminal.ansiRed) = needs user input (`.waiting_` marker)
-- **Green** (terminal.ansiGreen) = session completed (`.done_` marker, 5min TTL)
+- **Green** (terminal.ansiGreen) = needs user input (`.waiting_` marker)
 - **Gray** = no active sessions
+
+Current window's badge gets a white border ring for quick identification.
 
 Detection uses 5 Claude CLI hooks: Stop, PreToolUse, UserPromptSubmit, Notification (idle_prompt), SessionEnd.
 Hook script: `~/.claude/vscode-session-manager-hook.sh`
+Markers use PID-based naming (not session_id, which changes on /clear).
 Markers stored in: `~/.claude/sessions/`
 
 ## Testing

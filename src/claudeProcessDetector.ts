@@ -94,8 +94,7 @@ export class ClaudeProcessDetector {
     projectPath: string,
     sessions: ClaudeSession[],
     hookWaitingMarkers?: Set<string>,
-    hooksInstalled = false,
-    hookDoneMarkers?: Set<string>
+    hooksInstalled = false
   ): { status: ClaudeSessionStatus; sessions: ClaudeSession[] } {
     const normalized = projectPath.replace(/\/+$/, "");
     const matching = sessions.filter((s) => {
@@ -112,29 +111,13 @@ export class ClaudeProcessDetector {
     // Hooks mode: marker-only status determination, no CPU logic
     if (hooksInstalled) {
       const waitingMarkers = hookWaitingMarkers ?? new Set<string>();
-      const doneMarkers = hookDoneMarkers ?? new Set<string>();
 
-      const hasWaiting = matching.some(
+      const allWaiting = matching.every(
         (s) => waitingMarkers.has(String(s.pid))
       );
-      const hasDone = matching.some(
-        (s) => doneMarkers.has(String(s.pid))
-      );
-      // Priority: any active (no marker) > any waiting > all done
-      const allHaveMarkers = matching.every(
-        (s) =>
-          waitingMarkers.has(String(s.pid)) ||
-          doneMarkers.has(String(s.pid))
-      );
 
-      if (!allHaveMarkers) {
-        return { status: ClaudeSessionStatus.Active, sessions: sorted };
-      }
-      if (hasWaiting) {
+      if (allWaiting) {
         return { status: ClaudeSessionStatus.Waiting, sessions: sorted };
-      }
-      if (hasDone) {
-        return { status: ClaudeSessionStatus.Done, sessions: sorted };
       }
       return { status: ClaudeSessionStatus.Active, sessions: sorted };
     }
