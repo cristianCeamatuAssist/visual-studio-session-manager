@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.6.2] - 2026-04-07
+
+### Fixed
+
+- Fix session status stuck on wrong state (Green when Working, Working when idle) caused by session_id mismatch between hook payloads and .json session files — Claude Code changes session_id on /clear but doesn't update the file. Switched to PID-based markers which are stable for process lifetime.
+- Clean up legacy UUID-based marker files automatically
+
 ## [0.6.1] - 2026-04-06
 
 ### Fixed

@@ -237,30 +237,30 @@ describe("HookManager", () => {
   });
 
   describe("cleanStaleMarkers", () => {
-    it("removes markers for dead PIDs", async () => {
+    it("removes markers for dead PIDs and legacy UUID markers", async () => {
       mockedReaddir.mockResolvedValue(
         [".waiting_1001", ".waiting_1002", ".waiting_sess-abc"] as unknown as ReturnType<typeof fs.readdir>
       );
       mockedUnlink.mockResolvedValue(undefined);
 
       const alivePids = new Set([1001]);
-      const aliveSessionIds = new Set(["sess-abc"]);
-      await hookManager.cleanStaleMarkers(alivePids, aliveSessionIds);
+      await hookManager.cleanStaleMarkers(alivePids);
 
-      // Should only remove .waiting_1002 (dead PID, not a session ID)
-      expect(mockedUnlink).toHaveBeenCalledTimes(1);
-      expect(mockedUnlink.mock.calls[0][0]?.toString()).toContain(".waiting_1002");
+      // Should remove .waiting_1002 (dead PID) and .waiting_sess-abc (legacy UUID, always stale)
+      expect(mockedUnlink).toHaveBeenCalledTimes(2);
+      const removedPaths = mockedUnlink.mock.calls.map((c) => c[0]?.toString());
+      expect(removedPaths).toContainEqual(expect.stringContaining(".waiting_1002"));
+      expect(removedPaths).toContainEqual(expect.stringContaining(".waiting_sess-abc"));
     });
 
-    it("keeps markers for alive PIDs and session IDs", async () => {
+    it("keeps markers for alive PIDs", async () => {
       mockedReaddir.mockResolvedValue(
-        [".waiting_1001", ".waiting_sess-abc"] as unknown as ReturnType<typeof fs.readdir>
+        [".waiting_1001"] as unknown as ReturnType<typeof fs.readdir>
       );
       mockedUnlink.mockResolvedValue(undefined);
 
       const alivePids = new Set([1001]);
-      const aliveSessionIds = new Set(["sess-abc"]);
-      await hookManager.cleanStaleMarkers(alivePids, aliveSessionIds);
+      await hookManager.cleanStaleMarkers(alivePids);
 
       expect(mockedUnlink).not.toHaveBeenCalled();
     });

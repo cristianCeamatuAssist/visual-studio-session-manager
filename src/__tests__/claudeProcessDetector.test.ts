@@ -335,13 +335,13 @@ describe("ClaudeProcessDetector", () => {
       expect(result.status).toBe(ClaudeSessionStatus.Waiting);
     });
 
-    it("uses hook markers matching session ID", () => {
+    it("does not match hook markers by session ID (only PID)", () => {
       const sessions = makeSessions([{ pid: 1, cwd: "/Users/test/project", cpu: 2.0 }]);
 
-      // Hook marker by session ID
+      // Session ID markers are no longer matched — only PID markers
       const hookMarkers = new Set(["sess-1"]);
       const result = detector.getStatusForProject("/Users/test/project", sessions, hookMarkers);
-      expect(result.status).toBe(ClaudeSessionStatus.Waiting);
+      expect(result.status).toBe(ClaudeSessionStatus.Active);
     });
 
     it("returns Active when hook markers exist but none match these sessions", () => {
@@ -412,9 +412,9 @@ describe("ClaudeProcessDetector", () => {
       expect(result.status).toBe(ClaudeSessionStatus.Active);
     });
 
-    it("returns Waiting when a matching session has a waiting marker", () => {
+    it("returns Waiting when a matching session has a waiting marker by PID", () => {
       const sessions = makeSessions([{ pid: 1, cwd: "/Users/test/project" }]);
-      const hookMarkers = new Set(["sess-1"]);
+      const hookMarkers = new Set(["1"]);
       const result = detector.getStatusForProject("/Users/test/project", sessions, hookMarkers, true);
       expect(result.status).toBe(ClaudeSessionStatus.Waiting);
     });
@@ -450,7 +450,7 @@ describe("ClaudeProcessDetector", () => {
         kind: "cli",
         cpuPercent: 50.0, // high CPU but hooks override
       }];
-      const hookMarkers = new Set(["sess-1"]);
+      const hookMarkers = new Set(["1"]);
       const result = detector.getStatusForProject("/Users/test/project", sessions, hookMarkers, true);
       expect(result.status).toBe(ClaudeSessionStatus.Waiting);
     });

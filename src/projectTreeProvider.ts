@@ -104,8 +104,7 @@ export class ProjectTreeProvider
 
     // Clean up stale markers
     const alivePids = new Set(sessions.map((s) => s.pid));
-    const aliveSessionIds = new Set(sessions.map((s) => s.sessionId));
-    this.hookManager.cleanStaleMarkers(alivePids, aliveSessionIds);
+    this.hookManager.cleanStaleMarkers(alivePids);
 
     const workspacesWithStatus: WorkspaceWithStatus[] = workspaces.map((entry) => {
       const { status, sessions: matchingSessions } = this.detector.getStatusForProject(

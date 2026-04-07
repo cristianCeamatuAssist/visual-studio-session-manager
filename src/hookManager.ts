@@ -35,12 +35,12 @@ SESSIONS_DIR="$HOME/.claude/sessions"
 WAITING_PREFIX="${WAITING_MARKER_PREFIX}"
 DONE_PREFIX="${DONE_MARKER_PREFIX}"
 
-# Extract session_id from stdin JSON (hook event payload)
-INPUT=$(cat)
-SESSION_ID=$(echo "$INPUT" | grep -o '"session_id" *: *"[^"]*"' | head -1 | cut -d'"' -f4)
+# Consume stdin to avoid broken pipe (payload not needed)
+cat > /dev/null
 
-# Fallback to PPID if session_id not available
-MARKER_ID="\${SESSION_ID:-$PPID}"
+# Use PPID (Claude process PID) as marker ID — stable for process lifetime.
+# session_id changes on /clear but PID stays consistent with the .json session file.
+MARKER_ID="$PPID"
 
 if [ -n "$MARKER_ID" ]; then
   case "$ACTION" in
@@ -334,7 +334,7 @@ export class HookManager {
    * Clean up stale marker files for processes/sessions that no longer exist.
    * .waiting_ markers are cleaned immediately; .done_ markers are kept for DONE_MARKER_TTL.
    */
-  async cleanStaleMarkers(alivePids: Set<number>, aliveSessionIds: Set<string>): Promise<void> {
+  async cleanStaleMarkers(alivePids: Set<number>): Promise<void> {
     try {
       const files = await fs.readdir(CLAUDE_SESSIONS_DIR);
       const now = Date.now();
@@ -345,10 +345,8 @@ export class HookManager {
         if (file.startsWith(WAITING_MARKER_PREFIX)) {
           const markerId = file.slice(WAITING_MARKER_PREFIX.length);
           const markerPid = parseInt(markerId, 10);
-          const isPidMarker = !isNaN(markerPid);
-          const isStale = isPidMarker
-            ? !alivePids.has(markerPid)
-            : !aliveSessionIds.has(markerId);
+          // PID markers: stale if process is dead. Non-PID (legacy UUID): always stale.
+          const isStale = !isNaN(markerPid) ? !alivePids.has(markerPid) : true;
 
           if (isStale) {
             try { await fs.unlink(filePath); } catch { /* Already removed */ }
@@ -356,10 +354,7 @@ export class HookManager {
         } else if (file.startsWith(DONE_MARKER_PREFIX)) {
           const markerId = file.slice(DONE_MARKER_PREFIX.length);
           const markerPid = parseInt(markerId, 10);
-          const isPidMarker = !isNaN(markerPid);
-          const isStale = isPidMarker
-            ? !alivePids.has(markerPid)
-            : !aliveSessionIds.has(markerId);
+          const isStale = !isNaN(markerPid) ? !alivePids.has(markerPid) : true;
 
           // Keep done markers for TTL even if session is gone (green indicator)
           if (isStale) {

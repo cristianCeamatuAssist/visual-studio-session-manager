@@ -115,16 +115,16 @@ export class ClaudeProcessDetector {
       const doneMarkers = hookDoneMarkers ?? new Set<string>();
 
       const hasWaiting = matching.some(
-        (s) => waitingMarkers.has(String(s.pid)) || waitingMarkers.has(s.sessionId)
+        (s) => waitingMarkers.has(String(s.pid))
       );
       const hasDone = matching.some(
-        (s) => doneMarkers.has(String(s.pid)) || doneMarkers.has(s.sessionId)
+        (s) => doneMarkers.has(String(s.pid))
       );
       // Priority: any active (no marker) > any waiting > all done
       const allHaveMarkers = matching.every(
         (s) =>
-          waitingMarkers.has(String(s.pid)) || waitingMarkers.has(s.sessionId) ||
-          doneMarkers.has(String(s.pid)) || doneMarkers.has(s.sessionId)
+          waitingMarkers.has(String(s.pid)) ||
+          doneMarkers.has(String(s.pid))
       );
 
       if (!allHaveMarkers) {
@@ -148,9 +148,7 @@ export class ClaudeProcessDetector {
 
     if (hookWaitingMarkers && hookWaitingMarkers.size > 0) {
       const isHookConfirmedWaiting = matching.some(
-        (s) =>
-          hookWaitingMarkers.has(String(s.pid)) ||
-          hookWaitingMarkers.has(s.sessionId)
+        (s) => hookWaitingMarkers.has(String(s.pid))
       );
       if (isHookConfirmedWaiting) {
         return { status: ClaudeSessionStatus.Waiting, sessions: sorted };
