@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.7.2] - 2026-04-08
+
+### Changed
+
+- New marketplace icon: session constellation design with Claude Code logo in center hub
+- Added `icon` field to package.json for proper marketplace display
+
 ## [0.7.1] - 2026-04-08
 
 ### Changed
