@@ -1,4 +1,4 @@
-# Claude Pulse
+# Claude Code Pulse
 
 Monitor Claude Code sessions across VS Code windows with live status indicators.
 
@@ -17,9 +17,9 @@ Monitor Claude Code sessions across VS Code windows with live status indicators.
 ## Getting Started
 
 1. Install from the [VS Code Marketplace](https://marketplace.visualstudio.com/items?itemName=cristianCeamatuAssist.vscode-session-manager)
-2. Open the **Claude Pulse** panel in the activity bar (left sidebar)
+2. Open the **Claude Code Pulse** panel in the activity bar (left sidebar)
 3. Your open VS Code windows appear automatically
-4. Run **Claude Pulse: Install Status Hooks** from the command palette for instant status updates
+4. Run **Claude Code Pulse: Install Status Hooks** from the command palette for instant status updates
 
 ## How It Works
 

@@ -1,6 +1,6 @@
 {
   "name": "vscode-session-manager",
-  "displayName": "Claude Pulse",
+  "displayName": "Claude Code Pulse",
   "description": "Monitor Claude Code sessions across VS Code windows with live status indicators",
   "version": "0.8.0",
   "icon": "logo.png",
@@ -29,7 +29,7 @@
       "activitybar": [
         {
           "id": "claude-sessions",
-          "title": "Claude Pulse",
+          "title": "Claude Code Pulse",
           "icon": "resources/claude-sessions.svg"
         }
       ]
@@ -69,11 +69,11 @@
       },
       {
         "command": "claudeSessions.installHooks",
-        "title": "Claude Pulse: Install Status Hooks"
+        "title": "Claude Code Pulse: Install Status Hooks"
       },
       {
         "command": "claudeSessions.uninstallHooks",
-        "title": "Claude Pulse: Uninstall Status Hooks"
+        "title": "Claude Code Pulse: Uninstall Status Hooks"
       }
     ],
     "menus": {
@@ -109,7 +109,7 @@
       }
     ],
     "configuration": {
-      "title": "Claude Pulse",
+      "title": "Claude Code Pulse",
       "properties": {
         "claudeSessions.pollingInterval": {
           "type": "number",
