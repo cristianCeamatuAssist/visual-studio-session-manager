@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.8.0] - 2026-04-08
+
+### Changed
+
+- **Renamed to Claude Pulse** — cleaner, more memorable name for the marketplace
+- Updated activity bar title, command palette entries, and configuration section to match
+
 ## [0.7.2] - 2026-04-08
 
 ### Changed

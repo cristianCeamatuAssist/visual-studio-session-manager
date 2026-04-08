@@ -1,6 +1,6 @@
-# Visual Studio Session Manager
+# Claude Pulse
 
-Monitor and switch between VS Code windows with live Claude Code CLI session status indicators.
+Monitor Claude Code sessions across VS Code windows with live status indicators.
 
 ## Features
 
@@ -17,9 +17,9 @@ Monitor and switch between VS Code windows with live Claude Code CLI session sta
 ## Getting Started
 
 1. Install from the [VS Code Marketplace](https://marketplace.visualstudio.com/items?itemName=cristianCeamatuAssist.vscode-session-manager)
-2. Open the **Claude Sessions** panel in the activity bar (left sidebar)
+2. Open the **Claude Pulse** panel in the activity bar (left sidebar)
 3. Your open VS Code windows appear automatically
-4. Run **Claude Sessions: Install Status Hooks** from the command palette for instant status updates
+4. Run **Claude Pulse: Install Status Hooks** from the command palette for instant status updates
 
 ## How It Works
 
