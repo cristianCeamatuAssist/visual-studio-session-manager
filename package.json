@@ -68,6 +68,10 @@
         "icon": "$(terminal)"
       },
       {
+        "command": "claudeSessions.focusSession",
+        "title": "Focus Session Terminal"
+      },
+      {
         "command": "claudeSessions.installHooks",
         "title": "Claude Code Pulse: Install Status Hooks"
       },

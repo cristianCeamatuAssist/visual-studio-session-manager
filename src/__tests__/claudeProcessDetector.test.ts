@@ -366,6 +366,31 @@ describe("ClaudeProcessDetector", () => {
       expect(result.status).toBe(ClaudeSessionStatus.Inactive);
     });
 
+    it("getStatusForWorkspace matches sessions under any workspace folder", () => {
+      const sessions = makeSessions([
+        { pid: 1, cwd: "/Users/test/frontend/app", cpu: 15.0 },
+        { pid: 2, cwd: "/Users/test/backend", cpu: 30.0 },
+        { pid: 3, cwd: "/Users/test/mobile", cpu: 40.0 },
+      ]);
+
+      const result = detector.getStatusForWorkspace(
+        ["/Users/test/frontend", "/Users/test/backend"],
+        sessions
+      );
+
+      expect(result.status).toBe(ClaudeSessionStatus.Active);
+      expect(result.sessions.map((session) => session.pid)).toEqual([2, 1]);
+    });
+
+    it("getStatusForWorkspace does not match sibling prefixes", () => {
+      const sessions = makeSessions([{ pid: 1, cwd: "/Users/test/frontend-old", cpu: 10.0 }]);
+
+      const result = detector.getStatusForWorkspace(["/Users/test/frontend"], sessions);
+
+      expect(result.status).toBe(ClaudeSessionStatus.Inactive);
+      expect(result.sessions).toHaveLength(0);
+    });
+
     it("handles trailing slash normalization", () => {
       const sessions = makeSessions([{ pid: 1, cwd: "/Users/test/project/", cpu: 10.0 }]);
       const result = detector.getStatusForProject("/Users/test/project/", sessions);

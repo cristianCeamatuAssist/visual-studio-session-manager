@@ -85,8 +85,12 @@ class TreeItem {
   }
 }
 
-const ThemeIcon = vi.fn().mockImplementation((id: string) => ({ id }));
-const ThemeColor = vi.fn().mockImplementation((id: string) => ({ id }));
+const ThemeIcon = vi.fn(function (this: { id: string }, id: string) {
+  this.id = id;
+});
+const ThemeColor = vi.fn(function (this: { id: string }, id: string) {
+  this.id = id;
+});
 
 class MarkdownString {
   value = "";

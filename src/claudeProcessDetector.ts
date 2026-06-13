@@ -7,6 +7,16 @@ import { ClaudeSession, ClaudeSessionStatus } from "./types";
 
 const execAsync = promisify(exec);
 
+function normalizePath(value: string): string {
+  return value.replace(/\/+$/, "");
+}
+
+function isPathInsideFolder(candidatePath: string, folderPath: string): boolean {
+  const candidate = normalizePath(candidatePath);
+  const folder = normalizePath(folderPath);
+  return candidate === folder || candidate.startsWith(folder + "/");
+}
+
 interface RawSessionData {
   pid: number;
   sessionId: string;
@@ -96,11 +106,23 @@ export class ClaudeProcessDetector {
     hookWaitingMarkers?: Set<string>,
     hooksInstalled = false
   ): { status: ClaudeSessionStatus; sessions: ClaudeSession[] } {
-    const normalized = projectPath.replace(/\/+$/, "");
-    const matching = sessions.filter((s) => {
-      const sessionCwd = s.cwd.replace(/\/+$/, "");
-      return sessionCwd === normalized || sessionCwd.startsWith(normalized + "/");
-    });
+    return this.getStatusForWorkspace(
+      [projectPath],
+      sessions,
+      hookWaitingMarkers,
+      hooksInstalled
+    );
+  }
+
+  getStatusForWorkspace(
+    projectFolders: string[],
+    sessions: ClaudeSession[],
+    hookWaitingMarkers?: Set<string>,
+    hooksInstalled = false
+  ): { status: ClaudeSessionStatus; sessions: ClaudeSession[] } {
+    const matching = sessions.filter((s) =>
+      projectFolders.some((folder) => isPathInsideFolder(s.cwd, folder))
+    );
 
     if (matching.length === 0) {
       return { status: ClaudeSessionStatus.Inactive, sessions: [] };

@@ -9,8 +9,11 @@ import { WorkspaceRegistry } from "./workspaceRegistry";
 import { ProjectTreeProvider } from "./projectTreeProvider";
 import { StatusBarManager } from "./statusBarManager";
 import { HookManager } from "./hookManager";
-import { CONFIG_SECTION, CPU_ACTIVE_THRESHOLD, CLAUDE_SESSIONS_DIR, HOOKS_POLLING_INTERVAL, VSCODE_WORKSPACES_DIR } from "./constants";
-import { WorkspaceWithStatus } from "./types";
+import { CONFIG_SECTION, CPU_ACTIVE_THRESHOLD, CLAUDE_SESSIONS_DIR, HOOKS_POLLING_INTERVAL, VSCODE_WORKSPACES_DIR, FOCUS_REQUESTS_DIR } from "./constants";
+import { SessionItem, WorkspaceWithStatus } from "./types";
+import { buildWorkspaceRegistration } from "./workspaceIdentity";
+import { findTerminalForPid } from "./terminalLocator";
+import { writeFocusRequest, readPendingFocusRequests, clearFocusRequest } from "./focusRequests";
 
 const execAsync = promisify(exec);
 
@@ -119,12 +122,16 @@ export async function activate(context: vscode.ExtensionContext) {
   const statusBar = new StatusBarManager(detector, hookManager);
 
   // Register current workspace in the shared registry
-  const currentFolder = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
   const currentPid = process.pid;
+  const currentWorkspace = buildWorkspaceRegistration({
+    pid: currentPid,
+    workspaceFile: vscode.workspace.workspaceFile,
+    workspaceFolders: vscode.workspace.workspaceFolders,
+  });
 
-  if (currentFolder) {
-    registry.register(currentPid, currentFolder);
-    treeProvider.setCurrentWindowFolder(currentFolder);
+  if (currentWorkspace) {
+    registry.register(currentWorkspace);
+    treeProvider.setCurrentWindowKey(currentWorkspace.workspaceFile ?? currentWorkspace.folders[0]);
   }
 
   // Cache hooks state and propagate to components
@@ -196,19 +203,20 @@ export async function activate(context: vscode.ExtensionContext) {
     // Default click: switch to existing window or open new, repositioned in-place
     vscode.commands.registerCommand("claudeSessions.openProject", async (item: WorkspaceWithStatus) => {
       if (item?.entry?.folder) {
-        const currentFolder = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
-        if (currentFolder === item.entry.folder) {
+        const currentKey = currentWorkspace?.workspaceFile ?? currentWorkspace?.folders[0];
+        const itemKey = item.entry.workspaceFile ?? item.entry.folder;
+        if (currentKey === itemKey) {
           vscode.window.showInformationMessage(`Already in ${item.displayName}`);
           return;
         }
-        await switchToProject(item.entry.folder);
+        await switchToProject(itemKey);
       }
     }),
 
     // Explicit "new window" from context menu
     vscode.commands.registerCommand("claudeSessions.openProjectNewWindow", (item: WorkspaceWithStatus) => {
       if (item?.entry?.folder) {
-        const uri = vscode.Uri.file(item.entry.folder);
+        const uri = vscode.Uri.file(item.entry.workspaceFile ?? item.entry.folder);
         vscode.commands.executeCommand("vscode.openFolder", uri, { forceNewWindow: true });
       }
     }),
@@ -221,6 +229,22 @@ export async function activate(context: vscode.ExtensionContext) {
         });
         terminal.show();
       }
+    }),
+
+    vscode.commands.registerCommand("claudeSessions.focusSession", async (item: SessionItem) => {
+      if (!item?.session?.pid) {
+        return;
+      }
+
+      const terminal = await findTerminalForPid(item.session.pid, vscode.window.terminals);
+      if (terminal) {
+        terminal.show();
+        return;
+      }
+
+      await writeFocusRequest(item.session.pid);
+      const target = item.parentProject.entry;
+      await switchToProject(target.workspaceFile ?? target.folder);
     }),
 
     vscode.commands.registerCommand("claudeSessions.installHooks", async () => {
@@ -267,9 +291,9 @@ export async function activate(context: vscode.ExtensionContext) {
   );
 
   // Heartbeat: update registry entry on each poll cycle
-  if (currentFolder) {
+  if (currentWorkspace) {
     const heartbeatInterval = setInterval(() => {
-      registry.heartbeat(currentPid, currentFolder);
+      registry.heartbeat(currentWorkspace);
     }, 10000);
     context.subscriptions.push({ dispose: () => clearInterval(heartbeatInterval) });
   }
@@ -333,6 +357,32 @@ export async function activate(context: vscode.ExtensionContext) {
   context.subscriptions.push(registryWatcher, {
     dispose: () => { if (registryDebounceTimer) clearTimeout(registryDebounceTimer); }
   });
+
+  // Cross-window session focus: claim requests targeting terminals owned by this window
+  const handleFocusRequests = async () => {
+    const requests = await readPendingFocusRequests();
+    for (const request of requests) {
+      const ownedTerminal = await findTerminalForPid(request.pid, vscode.window.terminals);
+      if (ownedTerminal) {
+        await clearFocusRequest(request.pid);
+        ownedTerminal.show();
+      }
+    }
+  };
+
+  await fs.mkdir(FOCUS_REQUESTS_DIR, { recursive: true });
+  const focusPattern = new vscode.RelativePattern(
+    vscode.Uri.file(FOCUS_REQUESTS_DIR),
+    "*.json"
+  );
+  const runFocusRequestHandler = () => {
+    handleFocusRequests().catch(() => undefined);
+  };
+  const focusWatcher = vscode.workspace.createFileSystemWatcher(focusPattern);
+  focusWatcher.onDidCreate(runFocusRequestHandler);
+  focusWatcher.onDidChange(runFocusRequestHandler);
+  context.subscriptions.push(focusWatcher);
+  runFocusRequestHandler();
 
   // Suggest hook installation if not installed — show once per version
   hookManager.isInstalled().then((installed) => {

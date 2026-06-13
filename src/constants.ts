@@ -20,5 +20,8 @@ export const HOOKS_POLLING_INTERVAL = 5000;
 /** Directory where VS Code window instances register themselves for auto-discovery */
 export const VSCODE_WORKSPACES_DIR = path.join(os.homedir(), ".claude", "vscode-workspaces");
 
+/** Directory for cross-window "focus this session's terminal" requests */
+export const FOCUS_REQUESTS_DIR = path.join(VSCODE_WORKSPACES_DIR, "focus-requests");
+
 /** Key used in VS Code globalState to persist user's custom project order */
 export const PROJECT_ORDER_KEY = "projectOrder";

@@ -1,22 +1,48 @@
 import * as fs from "fs/promises";
 import * as path from "path";
 import { VSCODE_WORKSPACES_DIR } from "./constants";
-import { WorkspaceEntry } from "./types";
+import { WorkspaceEntry, WorkspaceRegistrationInput } from "./types";
+
+interface RawWorkspaceEntry {
+  pid?: unknown;
+  folder?: unknown;
+  folders?: unknown;
+  name?: unknown;
+  kind?: unknown;
+  workspaceFile?: unknown;
+  lastSeen?: unknown;
+}
+
+function normalizePath(value: string): string {
+  return value.replace(/\/+$/, "");
+}
+
+function normalizeFolders(folders: string[]): string[] {
+  return folders.map(normalizePath).filter(Boolean);
+}
 
 export class WorkspaceRegistry {
-  async register(pid: number, folderPath: string): Promise<void> {
+  async register(input: WorkspaceRegistrationInput): Promise<void> {
     await fs.mkdir(VSCODE_WORKSPACES_DIR, { recursive: true });
 
-    const normalized = folderPath.replace(/\/+$/, "");
+    const folders = normalizeFolders(input.folders);
+    const folder = folders[0];
+    const workspaceFile = input.workspaceFile
+      ? normalizePath(input.workspaceFile)
+      : undefined;
+
     const entry: WorkspaceEntry = {
-      pid,
-      folder: normalized,
-      name: path.basename(normalized),
+      pid: input.pid,
+      folder,
+      folders,
+      name: input.name,
+      kind: input.kind,
+      workspaceFile,
       lastSeen: Date.now(),
     };
 
     await fs.writeFile(
-      path.join(VSCODE_WORKSPACES_DIR, `${pid}.json`),
+      path.join(VSCODE_WORKSPACES_DIR, `${input.pid}.json`),
       JSON.stringify(entry),
       "utf-8"
     );
@@ -30,8 +56,8 @@ export class WorkspaceRegistry {
     }
   }
 
-  async heartbeat(pid: number, folderPath: string): Promise<void> {
-    await this.register(pid, folderPath);
+  async heartbeat(input: WorkspaceRegistrationInput): Promise<void> {
+    await this.register(input);
   }
 
   async getActiveWorkspaces(): Promise<WorkspaceEntry[]> {
@@ -51,9 +77,9 @@ export class WorkspaceRegistry {
           path.join(VSCODE_WORKSPACES_DIR, file),
           "utf-8"
         );
-        const entry = JSON.parse(content) as WorkspaceEntry;
+        const entry = this.normalizeEntry(JSON.parse(content) as RawWorkspaceEntry);
 
-        if (!entry.pid || !entry.folder) continue;
+        if (!entry) continue;
 
         const alive = this.isPidAlive(entry.pid);
         if (!alive) {
@@ -67,16 +93,49 @@ export class WorkspaceRegistry {
       }
     }
 
-    // Deduplicate by folder path — keep the entry with the most recent lastSeen
-    const byFolder = new Map<string, WorkspaceEntry>();
+    // Deduplicate by workspace file when present, otherwise folder path; keep newest lastSeen.
+    const byIdentity = new Map<string, WorkspaceEntry>();
     for (const entry of workspaces) {
-      const existing = byFolder.get(entry.folder);
+      const key = entry.workspaceFile ?? entry.folder;
+      const existing = byIdentity.get(key);
       if (!existing || entry.lastSeen > existing.lastSeen) {
-        byFolder.set(entry.folder, entry);
+        byIdentity.set(key, entry);
       }
     }
 
-    return Array.from(byFolder.values());
+    return Array.from(byIdentity.values());
+  }
+
+  private normalizeEntry(raw: RawWorkspaceEntry): WorkspaceEntry | undefined {
+    if (typeof raw.pid !== "number") return undefined;
+
+    const rawFolders = Array.isArray(raw.folders)
+      ? raw.folders.filter((folder): folder is string => typeof folder === "string")
+      : [];
+    const folderFromLegacy = typeof raw.folder === "string" ? raw.folder : undefined;
+    const folders = normalizeFolders(rawFolders.length > 0 ? rawFolders : folderFromLegacy ? [folderFromLegacy] : []);
+    const folder = typeof raw.folder === "string" ? normalizePath(raw.folder) : folders[0];
+
+    if (!folder || folders.length === 0) return undefined;
+
+    const workspaceFile = typeof raw.workspaceFile === "string"
+      ? normalizePath(raw.workspaceFile)
+      : undefined;
+    const kind = workspaceFile || raw.kind === "workspace" ? "workspace" : "folder";
+    const name = typeof raw.name === "string" && raw.name.length > 0
+      ? raw.name
+      : path.basename(folder);
+    const lastSeen = typeof raw.lastSeen === "number" ? raw.lastSeen : 0;
+
+    return {
+      pid: raw.pid,
+      folder,
+      folders,
+      name,
+      kind,
+      workspaceFile,
+      lastSeen,
+    };
   }
 
   private isPidAlive(pid: number): boolean {

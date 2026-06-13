@@ -4,6 +4,7 @@ import { ClaudeProcessDetector } from "./claudeProcessDetector";
 import { WorkspaceRegistry } from "./workspaceRegistry";
 import { HookManager } from "./hookManager";
 import { ClaudeSessionStatus, WorkspaceWithStatus, SessionItem, TreeNode } from "./types";
+import { resolveWorktree, WorktreeInfo } from "./worktreeResolver";
 import { CONFIG_SECTION, DEFAULT_POLLING_INTERVAL, PROJECT_ORDER_KEY } from "./constants";
 
 export class ProjectTreeProvider
@@ -21,24 +22,28 @@ export class ProjectTreeProvider
   private extensionPath: string;
   private globalState: vscode.Memento;
   private hooksInstalled = false;
-  private currentWindowFolder: string | undefined;
+  private currentWindowKey: string | undefined;
+  private resolveWorktreeFn: (folder: string) => Promise<WorktreeInfo>;
+  private worktreeInfoCache = new Map<string, WorktreeInfo>();
 
   constructor(
     detector: ClaudeProcessDetector,
     registry: WorkspaceRegistry,
     hookManager: HookManager,
     extensionPath: string,
-    globalState: vscode.Memento
+    globalState: vscode.Memento,
+    resolveWorktreeFn: (folder: string) => Promise<WorktreeInfo> = resolveWorktree
   ) {
     this.detector = detector;
     this.registry = registry;
     this.hookManager = hookManager;
     this.extensionPath = extensionPath;
     this.globalState = globalState;
+    this.resolveWorktreeFn = resolveWorktreeFn;
   }
 
-  setCurrentWindowFolder(folder: string | undefined): void {
-    this.currentWindowFolder = folder;
+  setCurrentWindowKey(key: string | undefined): void {
+    this.currentWindowKey = key?.replace(/\/+$/, "");
   }
 
   setHooksInstalled(installed: boolean): void {
@@ -83,13 +88,16 @@ export class ProjectTreeProvider
       return [];
     }
 
-    // Project children = its sessions
+    // Project children = its sessions followed by nested worktree windows
     if (element?.type === "project") {
-      return element.sessions.map((session) => ({
-        type: "session" as const,
-        session,
-        parentProject: element,
-      }));
+      return [
+        ...element.sessions.map((session) => ({
+          type: "session" as const,
+          session,
+          parentProject: element,
+        })),
+        ...element.worktrees,
+      ];
     }
 
     // Root level = active workspaces from registry
@@ -106,15 +114,15 @@ export class ProjectTreeProvider
     this.hookManager.cleanStaleMarkers(alivePids);
 
     const workspacesWithStatus: WorkspaceWithStatus[] = workspaces.map((entry) => {
-      const { status, sessions: matchingSessions } = this.detector.getStatusForProject(
-        entry.folder,
+      const { status, sessions: matchingSessions } = this.detector.getStatusForWorkspace(
+        entry.folders ?? [entry.folder],
         sessions,
         hookWaitingMarkers,
         this.hooksInstalled
       );
 
-      const normalizedCurrent = this.currentWindowFolder?.replace(/\/+$/, "");
-      const normalizedEntry = entry.folder.replace(/\/+$/, "");
+      const normalizedCurrent = this.currentWindowKey;
+      const normalizedEntry = (entry.workspaceFile ?? entry.folder).replace(/\/+$/, "");
 
       return {
         type: "project" as const,
@@ -124,14 +132,82 @@ export class ProjectTreeProvider
         sessions: matchingSessions,
         sessionCount: matchingSessions.length,
         isCurrentWindow: normalizedCurrent === normalizedEntry,
+        worktreeOf: undefined,
+        worktrees: [],
       };
     });
 
-    return this.applyOrder(workspacesWithStatus);
+    const byFolder = new Map<string, WorkspaceWithStatus>();
+    for (const project of workspacesWithStatus) {
+      for (const folder of project.entry.folders) {
+        byFolder.set(folder, project);
+      }
+    }
+
+    const roots: WorkspaceWithStatus[] = [];
+    for (const project of workspacesWithStatus) {
+      const info = await this.getWorktreeInfo(project.entry.folder);
+      if (info.isWorktree) {
+        project.worktreeOf = info.mainRepoRoot;
+      }
+
+      const parent = info.isWorktree && info.mainRepoRoot
+        ? byFolder.get(info.mainRepoRoot)
+        : undefined;
+
+      if (parent && parent !== project) {
+        parent.worktrees.push(project);
+      } else {
+        roots.push(project);
+      }
+    }
+
+    for (const root of roots) {
+      this.rollUpWorktreeStatus(root);
+    }
+
+    return this.applyOrder(roots);
+  }
+
+  private rollUpWorktreeStatus(project: WorkspaceWithStatus): void {
+    if (project.worktrees.length === 0) {
+      return;
+    }
+
+    for (const worktree of project.worktrees) {
+      this.rollUpWorktreeStatus(worktree);
+    }
+
+    project.sessionCount = project.sessions.length + project.worktrees
+      .reduce((total, worktree) => total + worktree.sessionCount, 0);
+
+    if (project.status !== ClaudeSessionStatus.Active &&
+        project.worktrees.some((worktree) => worktree.status === ClaudeSessionStatus.Active)) {
+      project.status = ClaudeSessionStatus.Active;
+      return;
+    }
+
+    if (project.status === ClaudeSessionStatus.Inactive &&
+        project.worktrees.some((worktree) => worktree.status === ClaudeSessionStatus.Waiting)) {
+      project.status = ClaudeSessionStatus.Waiting;
+    }
+  }
+
+  private async getWorktreeInfo(folder: string): Promise<WorktreeInfo> {
+    const cached = this.worktreeInfoCache.get(folder);
+    if (cached) {
+      return cached;
+    }
+
+    const info = await this.resolveWorktreeFn(folder);
+    this.worktreeInfoCache.set(folder, info);
+    return info;
   }
 
   handleDrag(source: readonly TreeNode[], dataTransfer: vscode.DataTransfer, _token: vscode.CancellationToken): void {
-    const projects = source.filter((node): node is WorkspaceWithStatus => node.type === "project");
+    const projects = source.filter((node): node is WorkspaceWithStatus =>
+      node.type === "project" && !node.worktreeOf
+    );
     if (projects.length === 0) {
       return;
     }
@@ -222,7 +298,7 @@ export class ProjectTreeProvider
 
   private getProjectTreeItem(element: WorkspaceWithStatus): vscode.TreeItem {
     const collapsible =
-      element.sessionCount > 0
+      element.sessionCount > 0 || element.worktrees.length > 0
         ? vscode.TreeItemCollapsibleState.Collapsed
         : vscode.TreeItemCollapsibleState.None;
 
@@ -238,7 +314,10 @@ export class ProjectTreeProvider
       dark: vscode.Uri.file(path.join(this.extensionPath, "resources", iconFile)),
     };
 
-    item.description = this.getStatusDescription(element);
+    const baseDescription = this.getStatusDescription(element);
+    item.description = element.worktreeOf
+      ? `worktree · ${baseDescription}`
+      : baseDescription;
     item.tooltip = this.buildProjectTooltip(element);
     item.contextValue = "project";
 
@@ -301,6 +380,11 @@ export class ProjectTreeProvider
     item.tooltip = md;
 
     item.contextValue = "session";
+    item.command = {
+      command: "claudeSessions.focusSession",
+      title: "Focus Session Terminal",
+      arguments: [element],
+    };
 
     return item;
   }
@@ -324,7 +408,9 @@ export class ProjectTreeProvider
         if (this.hooksInstalled) {
           return `Working${countStr}`;
         }
-        const cpu = project.sessions[0]?.cpuPercent?.toFixed(0) ?? "?";
+        const representativeSession = project.sessions[0] ??
+          project.worktrees.find((worktree) => worktree.sessions.length > 0)?.sessions[0];
+        const cpu = representativeSession?.cpuPercent?.toFixed(0) ?? "?";
         return `Working - CPU: ${cpu}%${countStr}`;
       }
       case ClaudeSessionStatus.Waiting: {
@@ -339,9 +425,15 @@ export class ProjectTreeProvider
   private buildProjectTooltip(project: WorkspaceWithStatus): vscode.MarkdownString {
     const md = new vscode.MarkdownString();
     md.appendMarkdown(`**${project.displayName}**\n\n`);
-    md.appendMarkdown(`Path: \`${project.entry.folder}\`\n\n`);
+    if (project.entry.workspaceFile) {
+      md.appendMarkdown(`Workspace: \`${project.entry.workspaceFile}\`\n\n`);
+    }
+    for (const folder of project.entry.folders) {
+      md.appendMarkdown(`- \`${folder}\`\n`);
+    }
+    md.appendMarkdown(`\n`);
 
-    if (project.sessions.length > 0) {
+    if (project.sessionCount > 0) {
       md.appendMarkdown(`**${project.sessionCount} session(s)** - click to expand`);
     } else {
       md.appendMarkdown("_No active Claude sessions_");

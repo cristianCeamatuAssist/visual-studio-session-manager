@@ -4,7 +4,9 @@ Monitor Claude Code sessions across VS Code windows with live status indicators.
 
 ## Features
 
-- **Auto-discover open windows** — automatically detects all open VS Code windows via a shared workspace registry, no manual setup needed
+- **Auto-discover open windows and workspaces** — detects folder windows and multi-root `.code-workspace` windows via a shared workspace registry
+- **Worktree grouping** — VS Code windows opened on a git worktree are nested under their parent repository in the tree
+- **Jump to session terminal** — click a Claude session to focus the exact terminal it runs in, even when that terminal lives in another VS Code window (integrated terminals only; sessions in external terminals like iTerm cannot be focused)
 - **Live session status** — see which projects have active or waiting Claude Code sessions at a glance
 - **Sidebar panel** — dedicated activity bar icon with a tree view of all your open projects
 - **Focused window indicator** — the current window's project shows a white border ring around its status dot for quick identification
@@ -23,7 +25,7 @@ Monitor Claude Code sessions across VS Code windows with live status indicators.
 
 ## How It Works
 
-The extension maintains a shared workspace registry at `~/.claude/vscode-workspaces/` — each open VS Code window registers itself so all instances stay in sync. Session status is detected via CLI hooks that write marker files when Claude starts working or finishes a response.
+The extension maintains a shared workspace registry at `~/.claude/vscode-workspaces/` — each open VS Code window registers its folder or `.code-workspace` file plus all workspace folders so all instances stay in sync. Session status is detected via CLI hooks that write marker files when Claude starts working or finishes a response. Clicking a session focuses the terminal hosting it: the extension walks process ancestry to find the owning integrated terminal, and uses small request files in `~/.claude/vscode-workspaces/focus-requests/` to hand off focus between windows.
 
 | Status | Dot color | Meaning |
 |--------|-----------|---------|

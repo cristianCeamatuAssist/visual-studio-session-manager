@@ -9,8 +9,6 @@ vi.mock("fs/promises", () => ({
   stat: vi.fn(),
 }));
 
-// [Review note 3] No child_process or util mocks needed — isPidAlive uses process.kill(pid, 0)
-
 import * as fs from "fs/promises";
 import { WorkspaceRegistry } from "../workspaceRegistry";
 
@@ -37,7 +35,12 @@ describe("WorkspaceRegistry", () => {
 
   describe("register", () => {
     it("creates directory and writes registration file", async () => {
-      await registry.register(12345, "/Users/test/my-project");
+      await registry.register({
+        pid: 12345,
+        folders: ["/Users/test/my-project"],
+        name: "my-project",
+        kind: "folder",
+      });
 
       expect(mockedMkdir).toHaveBeenCalledWith(
         expect.stringContaining("vscode-workspaces"),
@@ -51,21 +54,55 @@ describe("WorkspaceRegistry", () => {
     });
 
     it("normalizes trailing slashes", async () => {
-      await registry.register(12345, "/Users/test/my-project/");
+      await registry.register({
+        pid: 12345,
+        folders: ["/Users/test/my-project/"],
+        name: "my-project",
+        kind: "folder",
+      });
 
       const writtenContent = JSON.parse(
         mockedWriteFile.mock.calls[0][1] as string
       );
       expect(writtenContent.folder).toBe("/Users/test/my-project");
+      expect(writtenContent.folders).toEqual(["/Users/test/my-project"]);
     });
 
-    it("uses folder basename as name", async () => {
-      await registry.register(12345, "/Users/test/my-project");
+    it("uses provided folder window name", async () => {
+      await registry.register({
+        pid: 12345,
+        folders: ["/Users/test/my-project"],
+        name: "Custom Name",
+        kind: "folder",
+      });
 
       const writtenContent = JSON.parse(
         mockedWriteFile.mock.calls[0][1] as string
       );
-      expect(writtenContent.name).toBe("my-project");
+      expect(writtenContent.name).toBe("Custom Name");
+    });
+
+    it("writes all folders for a multi-root workspace", async () => {
+      await registry.register({
+        pid: 222,
+        folders: ["/Users/test/frontend/", "/Users/test/backend"],
+        name: "Frontend Backend",
+        kind: "workspace",
+        workspaceFile: "/Users/test/projects.code-workspace/",
+      });
+
+      const writtenContent = JSON.parse(
+        mockedWriteFile.mock.calls[0][1] as string
+      );
+      expect(writtenContent).toMatchObject({
+        pid: 222,
+        folder: "/Users/test/frontend",
+        folders: ["/Users/test/frontend", "/Users/test/backend"],
+        name: "Frontend Backend",
+        kind: "workspace",
+        workspaceFile: "/Users/test/projects.code-workspace",
+      });
+      expect(writtenContent.lastSeen).toBeGreaterThan(0);
     });
   });
 
@@ -87,7 +124,12 @@ describe("WorkspaceRegistry", () => {
 
   describe("heartbeat", () => {
     it("updates lastSeen timestamp in the file", async () => {
-      await registry.heartbeat(12345, "/Users/test/my-project");
+      await registry.heartbeat({
+        pid: 12345,
+        folders: ["/Users/test/my-project"],
+        name: "my-project",
+        kind: "folder",
+      });
 
       expect(mockedWriteFile).toHaveBeenCalledWith(
         expect.stringContaining("12345.json"),
@@ -107,7 +149,9 @@ describe("WorkspaceRegistry", () => {
       const entry = JSON.stringify({
         pid: 12345,
         folder: "/Users/test/project-a",
+        folders: ["/Users/test/project-a"],
         name: "project-a",
+        kind: "folder",
         lastSeen: Date.now(),
       });
 
@@ -115,7 +159,6 @@ describe("WorkspaceRegistry", () => {
         ["12345.json"] as unknown as ReturnType<typeof fs.readdir>
       );
       mockedReadFile.mockResolvedValue(entry);
-      // [Review note 3] PID is alive — process.kill(pid, 0) succeeds silently
       vi.spyOn(process, "kill").mockReturnValue(true);
 
       const workspaces = await registry.getActiveWorkspaces();
@@ -123,11 +166,40 @@ describe("WorkspaceRegistry", () => {
       expect(workspaces[0].folder).toBe("/Users/test/project-a");
     });
 
+    it("migrates legacy single-folder entries when reading", async () => {
+      mockedReaddir.mockResolvedValue(
+        ["12345.json"] as unknown as ReturnType<typeof fs.readdir>
+      );
+      mockedReadFile.mockResolvedValue(
+        JSON.stringify({
+          pid: 12345,
+          folder: "/Users/test/project-a",
+          name: "project-a",
+          lastSeen: 1000,
+        })
+      );
+      vi.spyOn(process, "kill").mockReturnValue(true);
+
+      const workspaces = await registry.getActiveWorkspaces();
+      expect(workspaces).toEqual([
+        {
+          pid: 12345,
+          folder: "/Users/test/project-a",
+          folders: ["/Users/test/project-a"],
+          name: "project-a",
+          kind: "folder",
+          lastSeen: 1000,
+        },
+      ]);
+    });
+
     it("removes stale entries for dead PIDs", async () => {
       const entry = JSON.stringify({
         pid: 99999,
         folder: "/Users/test/dead-project",
+        folders: ["/Users/test/dead-project"],
         name: "dead-project",
+        kind: "folder",
         lastSeen: Date.now() - 60000,
       });
 
@@ -135,7 +207,6 @@ describe("WorkspaceRegistry", () => {
         ["99999.json"] as unknown as ReturnType<typeof fs.readdir>
       );
       mockedReadFile.mockResolvedValue(entry);
-      // [Review note 3] PID is dead — process.kill(pid, 0) throws
       vi.spyOn(process, "kill").mockImplementation(() => {
         throw new Error("ESRCH");
       });
@@ -155,7 +226,9 @@ describe("WorkspaceRegistry", () => {
         JSON.stringify({
           pid: 12345,
           folder: "/Users/test/project",
+          folders: ["/Users/test/project"],
           name: "project",
+          kind: "folder",
           lastSeen: Date.now(),
         })
       );
@@ -182,23 +255,61 @@ describe("WorkspaceRegistry", () => {
           return JSON.stringify({
             pid: 111,
             folder: "/Users/test/same-project",
+            folders: ["/Users/test/same-project"],
             name: "same-project",
-            lastSeen: Date.now(),
+            kind: "folder",
+            lastSeen: 2000,
           });
         }
         return JSON.stringify({
           pid: 222,
           folder: "/Users/test/same-project",
+          folders: ["/Users/test/same-project"],
           name: "same-project",
-          lastSeen: Date.now() - 1000,
+          kind: "folder",
+          lastSeen: 1000,
         });
       });
       vi.spyOn(process, "kill").mockReturnValue(true);
 
       const workspaces = await registry.getActiveWorkspaces();
-      // Should keep the most recent (PID 111)
       expect(workspaces).toHaveLength(1);
       expect(workspaces[0].pid).toBe(111);
+    });
+
+    it("deduplicates workspace entries by workspace file, keeping newest lastSeen", async () => {
+      mockedReaddir.mockResolvedValue(
+        ["111.json", "222.json"] as unknown as ReturnType<typeof fs.readdir>
+      );
+      mockedReadFile.mockImplementation(async (filePath) => {
+        const fp = filePath.toString();
+        if (fp.includes("111.json")) {
+          return JSON.stringify({
+            pid: 111,
+            folder: "/Users/test/frontend",
+            folders: ["/Users/test/frontend", "/Users/test/backend"],
+            name: "Projects",
+            kind: "workspace",
+            workspaceFile: "/Users/test/projects.code-workspace",
+            lastSeen: 1000,
+          });
+        }
+        return JSON.stringify({
+          pid: 222,
+          folder: "/Users/test/backend",
+          folders: ["/Users/test/backend", "/Users/test/frontend"],
+          name: "Projects",
+          kind: "workspace",
+          workspaceFile: "/Users/test/projects.code-workspace/",
+          lastSeen: 2000,
+        });
+      });
+      vi.spyOn(process, "kill").mockReturnValue(true);
+
+      const workspaces = await registry.getActiveWorkspaces();
+      expect(workspaces).toHaveLength(1);
+      expect(workspaces[0].pid).toBe(222);
+      expect(workspaces[0].workspaceFile).toBe("/Users/test/projects.code-workspace");
     });
   });
 });

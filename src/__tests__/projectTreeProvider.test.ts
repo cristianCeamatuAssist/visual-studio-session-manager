@@ -8,7 +8,7 @@ import { ClaudeSessionStatus, WorkspaceWithStatus, WorkspaceEntry } from "../typ
 function createMockDetector() {
   return {
     detectSessions: vi.fn().mockResolvedValue([]),
-    getStatusForProject: vi.fn().mockReturnValue({
+    getStatusForWorkspace: vi.fn().mockReturnValue({
       status: ClaudeSessionStatus.Inactive,
       sessions: [],
     }),
@@ -32,13 +32,20 @@ function createMockHookManager() {
 }
 
 function makeEntry(overrides: Partial<WorkspaceEntry> = {}): WorkspaceEntry {
+  const folder = overrides.folder ?? "/Users/test/project";
   return {
     pid: 12345,
-    folder: "/Users/test/project",
+    folder,
+    folders: [folder],
     name: "project",
+    kind: "folder",
     lastSeen: Date.now(),
     ...overrides,
   };
+}
+
+function createMockWorktreeResolver() {
+  return vi.fn().mockResolvedValue({ isWorktree: false });
 }
 
 describe("ProjectTreeProvider", () => {
@@ -47,6 +54,7 @@ describe("ProjectTreeProvider", () => {
   let mockRegistry: ReturnType<typeof createMockRegistry>;
   let mockHookManager: ReturnType<typeof createMockHookManager>;
   let mockGlobalState: ReturnType<typeof createMockMemento>;
+  let mockResolveWorktree: ReturnType<typeof createMockWorktreeResolver>;
 
   beforeEach(() => {
     vi.clearAllMocks();
@@ -54,12 +62,14 @@ describe("ProjectTreeProvider", () => {
     mockRegistry = createMockRegistry();
     mockHookManager = createMockHookManager();
     mockGlobalState = createMockMemento();
+    mockResolveWorktree = createMockWorktreeResolver();
     provider = new ProjectTreeProvider(
       mockDetector as never,
       mockRegistry as never,
       mockHookManager as never,
       "/ext/path",
-      mockGlobalState as never
+      mockGlobalState as never,
+      mockResolveWorktree
     );
   });
 
@@ -74,7 +84,7 @@ describe("ProjectTreeProvider", () => {
       mockRegistry.getActiveWorkspaces.mockResolvedValue([
         makeEntry({ folder: "/Users/test/alpha", name: "alpha" }),
       ]);
-      mockDetector.getStatusForProject.mockReturnValue({
+      mockDetector.getStatusForWorkspace.mockReturnValue({
         status: ClaudeSessionStatus.Active,
         sessions: [{ pid: 1, sessionId: "s1", cwd: "/Users/test/alpha", startedAt: Date.now(), kind: "cli", cpuPercent: 50 }],
       });
@@ -97,7 +107,8 @@ describe("ProjectTreeProvider", () => {
         makeEntry({ pid: 4, folder: "/other", name: "a-other" }),
       ]);
 
-      mockDetector.getStatusForProject.mockImplementation((folder: string) => {
+      mockDetector.getStatusForWorkspace.mockImplementation((folders: string[]) => {
+        const folder = folders[0];
         if (folder === "/active") return { status: ClaudeSessionStatus.Active, sessions: [{ pid: 2 }] };
         if (folder === "/waiting") return { status: ClaudeSessionStatus.Waiting, sessions: [{ pid: 3 }] };
         if (folder === "/other") return { status: ClaudeSessionStatus.Active, sessions: [{ pid: 4 }] };
@@ -115,7 +126,7 @@ describe("ProjectTreeProvider", () => {
         makeEntry({ pid: 1, folder: "/alpha", name: "alpha" }),
         makeEntry({ pid: 2, folder: "/zeta", name: "zeta" }),
       ]);
-      mockDetector.getStatusForProject.mockReturnValue({
+      mockDetector.getStatusForWorkspace.mockReturnValue({
         status: ClaudeSessionStatus.Inactive,
         sessions: [],
       });
@@ -131,7 +142,7 @@ describe("ProjectTreeProvider", () => {
         makeEntry({ pid: 1, folder: "/alpha", name: "alpha" }),
         makeEntry({ pid: 2, folder: "/zeta", name: "zeta" }),
       ]);
-      mockDetector.getStatusForProject.mockReturnValue({
+      mockDetector.getStatusForWorkspace.mockReturnValue({
         status: ClaudeSessionStatus.Inactive,
         sessions: [],
       });
@@ -142,11 +153,52 @@ describe("ProjectTreeProvider", () => {
       // Saved order should be cleaned
       expect(mockGlobalState.get("projectOrder")).toEqual(["/alpha", "/zeta"]);
     });
+
+
+    it("passes every workspace folder to the Claude detector", async () => {
+      mockRegistry.getActiveWorkspaces.mockResolvedValue([
+        makeEntry({
+          folder: "/Users/test/frontend",
+          folders: ["/Users/test/frontend", "/Users/test/backend", "/Users/test/mobile"],
+          name: "Frontend Backend Mobile projects",
+          kind: "workspace",
+          workspaceFile: "/Users/test/app.code-workspace",
+        }),
+      ]);
+
+      await provider.getChildren();
+
+      expect(mockDetector.getStatusForWorkspace).toHaveBeenCalledWith(
+        ["/Users/test/frontend", "/Users/test/backend", "/Users/test/mobile"],
+        expect.any(Array),
+        expect.any(Set),
+        false
+      );
+    });
+
+    it("labels current multi-root workspace by workspace file key", async () => {
+      provider.setCurrentWindowKey("/Users/test/app.code-workspace");
+      mockRegistry.getActiveWorkspaces.mockResolvedValue([
+        makeEntry({
+          folder: "/Users/test/frontend",
+          folders: ["/Users/test/frontend", "/Users/test/backend"],
+          name: "Frontend Backend",
+          kind: "workspace",
+          workspaceFile: "/Users/test/app.code-workspace",
+        }),
+      ]);
+
+      const children = await provider.getChildren();
+      const item = provider.getTreeItem(children[0]);
+
+      expect((item as vscode.TreeItem).label).toBe("Frontend Backend (this window)");
+    });
+
   });
 
   describe("isCurrentWindow labeling", () => {
     it("labels current window with '(this window)' suffix", async () => {
-      provider.setCurrentWindowFolder("/Users/test/my-project");
+      provider.setCurrentWindowKey("/Users/test/my-project");
       mockRegistry.getActiveWorkspaces.mockResolvedValue([
         makeEntry({ folder: "/Users/test/my-project", name: "my-project" }),
       ]);
@@ -157,7 +209,7 @@ describe("ProjectTreeProvider", () => {
     });
 
     it("does not label non-current windows", async () => {
-      provider.setCurrentWindowFolder("/Users/test/other-project");
+      provider.setCurrentWindowKey("/Users/test/other-project");
       mockRegistry.getActiveWorkspaces.mockResolvedValue([
         makeEntry({ folder: "/Users/test/my-project", name: "my-project" }),
       ]);
@@ -168,7 +220,7 @@ describe("ProjectTreeProvider", () => {
     });
 
     it("does not set click command on current window item", async () => {
-      provider.setCurrentWindowFolder("/Users/test/my-project");
+      provider.setCurrentWindowKey("/Users/test/my-project");
       mockRegistry.getActiveWorkspaces.mockResolvedValue([
         makeEntry({ folder: "/Users/test/my-project", name: "my-project" }),
       ]);
@@ -179,7 +231,7 @@ describe("ProjectTreeProvider", () => {
     });
 
     it("sets click command on non-current window items", async () => {
-      provider.setCurrentWindowFolder("/Users/test/other");
+      provider.setCurrentWindowKey("/Users/test/other");
       mockRegistry.getActiveWorkspaces.mockResolvedValue([
         makeEntry({ folder: "/Users/test/my-project", name: "my-project" }),
       ]);
@@ -203,7 +255,7 @@ describe("ProjectTreeProvider", () => {
       mockRegistry.getActiveWorkspaces.mockResolvedValue([
         makeEntry({ folder: "/test", name: "test" }),
       ]);
-      mockDetector.getStatusForProject.mockReturnValue({ status, sessions });
+      mockDetector.getStatusForWorkspace.mockReturnValue({ status, sessions });
       provider.setHooksInstalled(hooksInstalled);
 
       const children = await provider.getChildren();
@@ -244,9 +296,9 @@ describe("ProjectTreeProvider", () => {
       const order = folders;
       mockGlobalState.update("projectOrder", order);
       mockRegistry.getActiveWorkspaces.mockResolvedValue(
-        folders.map((f, i) => makeEntry({ pid: i + 1, folder: f, name: f.slice(1) }))
+        folders.map((f, i) => makeEntry({ pid: i + 1, folder: f, folders: [f], name: f.slice(1) }))
       );
-      mockDetector.getStatusForProject.mockReturnValue({
+      mockDetector.getStatusForWorkspace.mockReturnValue({
         status: ClaudeSessionStatus.Inactive,
         sessions: [],
       });
@@ -298,6 +350,27 @@ describe("ProjectTreeProvider", () => {
       await provider.handleDrop(projects[3], dt as never, token as never);
       expect(mockGlobalState.get("projectOrder")).toEqual(["/b", "/a", "/c", "/d"]);
     });
+
+
+    it("handleDrag ignores nested worktree projects", async () => {
+      const worktree = {
+        type: "project" as const,
+        entry: makeEntry({ folder: "/a-wt", folders: ["/a-wt"], name: "a-wt" }),
+        displayName: "a-wt",
+        status: ClaudeSessionStatus.Inactive,
+        sessions: [],
+        sessionCount: 0,
+        isCurrentWindow: false,
+        worktreeOf: "/a",
+        worktrees: [],
+      };
+      const dt = new DataTransfer();
+
+      provider.handleDrag([worktree], dt as never, token as never);
+
+      expect(dt.get("application/vnd.code.tree.claudesessionsprojects")).toBeUndefined();
+    });
+
   });
 
   describe("getChildren — session children", () => {
@@ -306,7 +379,7 @@ describe("ProjectTreeProvider", () => {
       mockRegistry.getActiveWorkspaces.mockResolvedValue([
         makeEntry({ folder: "/test", name: "test" }),
       ]);
-      mockDetector.getStatusForProject.mockReturnValue({
+      mockDetector.getStatusForWorkspace.mockReturnValue({
         status: ClaudeSessionStatus.Active,
         sessions: [session],
       });
@@ -322,7 +395,7 @@ describe("ProjectTreeProvider", () => {
       mockRegistry.getActiveWorkspaces.mockResolvedValue([
         makeEntry({ folder: "/test", name: "test" }),
       ]);
-      mockDetector.getStatusForProject.mockReturnValue({
+      mockDetector.getStatusForWorkspace.mockReturnValue({
         status: ClaudeSessionStatus.Active,
         sessions: [session],
       });
@@ -331,6 +404,157 @@ describe("ProjectTreeProvider", () => {
       const sessions = await provider.getChildren(roots[0]);
       const leaf = await provider.getChildren(sessions[0]);
       expect(leaf).toEqual([]);
+    });
+
+
+    it("wires session items to the focusSession command", async () => {
+      mockRegistry.getActiveWorkspaces.mockResolvedValue([makeEntry()]);
+      mockDetector.getStatusForWorkspace.mockReturnValue({
+        status: ClaudeSessionStatus.Active,
+        sessions: [{ pid: 9, sessionId: "s9", cwd: "/Users/test/project", startedAt: Date.now(), kind: "cli", cpuPercent: 50 }],
+      });
+
+      const roots = await provider.getChildren();
+      const children = await provider.getChildren(roots[0]);
+      const item = provider.getTreeItem(children[0]);
+
+      expect((item as vscode.TreeItem).command).toMatchObject({
+        command: "claudeSessions.focusSession",
+      });
+    });
+
+  });
+
+  describe("worktree grouping", () => {
+    it("nests a worktree window under its parent project", async () => {
+      mockRegistry.getActiveWorkspaces.mockResolvedValue([
+        makeEntry({ pid: 1, folder: "/Users/test/myrepo", folders: ["/Users/test/myrepo"], name: "myrepo" }),
+        makeEntry({ pid: 2, folder: "/Users/test/myrepo-wt", folders: ["/Users/test/myrepo-wt"], name: "myrepo-wt" }),
+      ]);
+      mockResolveWorktree.mockImplementation(async (folder: string) =>
+        folder === "/Users/test/myrepo-wt"
+          ? { isWorktree: true, mainRepoRoot: "/Users/test/myrepo" }
+          : { isWorktree: false }
+      );
+
+      const roots = await provider.getChildren();
+
+      expect(roots).toHaveLength(1);
+      const parent = roots[0] as WorkspaceWithStatus;
+      expect(parent.displayName).toBe("myrepo");
+      expect(parent.worktrees).toHaveLength(1);
+      expect(parent.worktrees[0].displayName).toBe("myrepo-wt");
+      expect(parent.worktrees[0].worktreeOf).toBe("/Users/test/myrepo");
+    });
+
+
+
+    it("nests a worktree under a parent workspace secondary folder", async () => {
+      mockRegistry.getActiveWorkspaces.mockResolvedValue([
+        makeEntry({
+          pid: 1,
+          folder: "/Users/test/frontend",
+          folders: ["/Users/test/frontend", "/Users/test/myrepo"],
+          name: "App Workspace",
+          kind: "workspace",
+          workspaceFile: "/Users/test/app.code-workspace",
+        }),
+        makeEntry({ pid: 2, folder: "/Users/test/myrepo-wt", folders: ["/Users/test/myrepo-wt"], name: "myrepo-wt" }),
+      ]);
+      mockResolveWorktree.mockImplementation(async (folder: string) =>
+        folder === "/Users/test/myrepo-wt"
+          ? { isWorktree: true, mainRepoRoot: "/Users/test/myrepo" }
+          : { isWorktree: false }
+      );
+
+      const roots = await provider.getChildren();
+
+      expect(roots).toHaveLength(1);
+      const parent = roots[0] as WorkspaceWithStatus;
+      expect(parent.displayName).toBe("App Workspace");
+      expect(parent.worktrees).toHaveLength(1);
+      expect(parent.worktrees[0].displayName).toBe("myrepo-wt");
+    });
+
+
+    it("returns worktree projects as children after sessions", async () => {
+      mockRegistry.getActiveWorkspaces.mockResolvedValue([
+        makeEntry({ pid: 1, folder: "/Users/test/myrepo", folders: ["/Users/test/myrepo"], name: "myrepo" }),
+        makeEntry({ pid: 2, folder: "/Users/test/myrepo-wt", folders: ["/Users/test/myrepo-wt"], name: "myrepo-wt" }),
+      ]);
+      mockDetector.getStatusForWorkspace.mockImplementation((folders: string[]) =>
+        folders[0] === "/Users/test/myrepo"
+          ? {
+              status: ClaudeSessionStatus.Active,
+              sessions: [{ pid: 9, sessionId: "s9", cwd: "/Users/test/myrepo", startedAt: Date.now(), kind: "cli", cpuPercent: 50 }],
+            }
+          : { status: ClaudeSessionStatus.Inactive, sessions: [] }
+      );
+      mockResolveWorktree.mockImplementation(async (folder: string) =>
+        folder === "/Users/test/myrepo-wt"
+          ? { isWorktree: true, mainRepoRoot: "/Users/test/myrepo" }
+          : { isWorktree: false }
+      );
+
+      const roots = await provider.getChildren();
+      const children = await provider.getChildren(roots[0]);
+
+      expect(children.map((c) => c.type)).toEqual(["session", "project"]);
+    });
+
+
+
+    it("rolls active worktree status up to the parent row", async () => {
+      mockRegistry.getActiveWorkspaces.mockResolvedValue([
+        makeEntry({ pid: 1, folder: "/Users/test/myrepo", folders: ["/Users/test/myrepo"], name: "myrepo" }),
+        makeEntry({ pid: 2, folder: "/Users/test/myrepo-wt", folders: ["/Users/test/myrepo-wt"], name: "myrepo-wt" }),
+      ]);
+      mockDetector.getStatusForWorkspace.mockImplementation((folders: string[]) =>
+        folders[0] === "/Users/test/myrepo-wt"
+          ? {
+              status: ClaudeSessionStatus.Active,
+              sessions: [{ pid: 9, sessionId: "s9", cwd: "/Users/test/myrepo-wt", startedAt: Date.now(), kind: "cli", cpuPercent: 50 }],
+            }
+          : { status: ClaudeSessionStatus.Inactive, sessions: [] }
+      );
+      mockResolveWorktree.mockImplementation(async (folder: string) =>
+        folder === "/Users/test/myrepo-wt"
+          ? { isWorktree: true, mainRepoRoot: "/Users/test/myrepo" }
+          : { isWorktree: false }
+      );
+
+      const roots = await provider.getChildren();
+      const parent = roots[0] as WorkspaceWithStatus;
+      const item = provider.getTreeItem(parent);
+
+      expect(parent.status).toBe(ClaudeSessionStatus.Active);
+      expect(parent.sessionCount).toBe(1);
+      expect((item as vscode.TreeItem).description).toBe("Working - CPU: 50%");
+    });
+
+
+    it("keeps a worktree at root level when its parent window is not open", async () => {
+      mockRegistry.getActiveWorkspaces.mockResolvedValue([
+        makeEntry({ pid: 2, folder: "/Users/test/myrepo-wt", folders: ["/Users/test/myrepo-wt"], name: "myrepo-wt" }),
+      ]);
+      mockResolveWorktree.mockResolvedValue({ isWorktree: true, mainRepoRoot: "/Users/test/myrepo" });
+
+      const roots = await provider.getChildren();
+
+      expect(roots).toHaveLength(1);
+      expect((roots[0] as WorkspaceWithStatus).worktreeOf).toBe("/Users/test/myrepo");
+    });
+
+    it("marks worktree items in the tree item description", async () => {
+      mockRegistry.getActiveWorkspaces.mockResolvedValue([
+        makeEntry({ pid: 2, folder: "/Users/test/myrepo-wt", folders: ["/Users/test/myrepo-wt"], name: "myrepo-wt" }),
+      ]);
+      mockResolveWorktree.mockResolvedValue({ isWorktree: true, mainRepoRoot: "/Users/test/myrepo" });
+
+      const roots = await provider.getChildren();
+      const item = provider.getTreeItem(roots[0]);
+
+      expect(String((item as vscode.TreeItem).description)).toContain("worktree");
     });
   });
 });
