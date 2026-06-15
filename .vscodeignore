@@ -11,3 +11,9 @@ esbuild.mjs
 vitest.config.ts
 src/__tests__/**
 *.vsix
+.superpowers/**
+.playwright-mcp/**
+.claude/**
+icon-options-preview.png
+icon-v2-sparkle.png
+icon-final-claude-logo.png

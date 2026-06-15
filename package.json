@@ -2,7 +2,7 @@
   "name": "vscode-session-manager",
   "displayName": "Claude Code Pulse",
   "description": "Monitor Claude Code sessions across VS Code windows with live status indicators",
-  "version": "0.9.1",
+  "version": "0.9.2",
   "icon": "logo.png",
   "publisher": "cristianCeamatuAssist",
   "license": "MIT",

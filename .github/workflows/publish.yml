@@ -23,7 +23,15 @@ jobs:
 
       - run: npm test
 
+      - name: Package extension
+        run: npx @vscode/vsce package --no-dependencies -o extension.vsix
+
       - name: Publish to VS Code Marketplace
         env:
           VSCE_PAT: ${{ secrets.VSCE_PAT }}
-        run: npx @vscode/vsce publish --no-dependencies --allow-missing-repository -p "$VSCE_PAT"
+        run: npx @vscode/vsce publish --packagePath extension.vsix -p "$VSCE_PAT"
+
+      - name: Publish to Open VSX (Cursor / Windsurf / VSCodium)
+        env:
+          OVSX_PAT: ${{ secrets.OVSX_PAT }}
+        run: npx ovsx publish extension.vsix -p "$OVSX_PAT"
