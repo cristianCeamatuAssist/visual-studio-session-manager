@@ -1,14 +1,14 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
-vi.mock("child_process", () => ({ exec: vi.fn() }));
+vi.mock("child_process", () => ({ execFile: vi.fn() }));
 
-import { exec } from "child_process";
+import { execFile } from "child_process";
 import { getGitBranch } from "../gitBranch";
 
-const mockedExec = vi.mocked(exec);
+const mockedExecFile = vi.mocked(execFile);
 
 function execReturns(stdout: string, err: Error | null = null): void {
-  mockedExec.mockImplementation(((_cmd: string, cb: (e: Error | null, r: { stdout: string; stderr: string }) => void) => {
+  mockedExecFile.mockImplementation(((_file: string, _args: string[], cb: (e: Error | null, r: { stdout: string; stderr: string }) => void) => {
     cb(err, { stdout, stderr: "" });
     return undefined as never;
   }) as never);
@@ -38,9 +38,9 @@ describe("getGitBranch", () => {
     execReturns("main\n");
     await getGitBranch("/repo-d", 1000);
     await getGitBranch("/repo-d", 1500); // within TTL → cached
-    expect(mockedExec).toHaveBeenCalledTimes(1);
+    expect(mockedExecFile).toHaveBeenCalledTimes(1);
 
     await getGitBranch("/repo-d", 1000 + 60_000); // past TTL → re-run
-    expect(mockedExec).toHaveBeenCalledTimes(2);
+    expect(mockedExecFile).toHaveBeenCalledTimes(2);
   });
 });
