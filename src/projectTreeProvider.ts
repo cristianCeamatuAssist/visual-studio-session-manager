@@ -8,7 +8,7 @@ import { resolveWorktree, WorktreeInfo } from "./worktreeResolver";
 import { getGitBranch } from "./gitBranch";
 import { TranscriptReader } from "./transcriptReader";
 import { SessionMetadata } from "./sessionMetadata";
-import { CONFIG_SECTION, DEFAULT_POLLING_INTERVAL, PROJECT_ORDER_KEY } from "./constants";
+import { CONFIG_SECTION, DEFAULT_POLLING_INTERVAL, PROJECT_ORDER_KEY, EXPAND_ALL_KEY } from "./constants";
 
 const sharedTranscriptReader = new TranscriptReader();
 
@@ -32,6 +32,7 @@ export class ProjectTreeProvider
   private worktreeInfoCache = new Map<string, WorktreeInfo>();
   private readSessionMetadataFn: (sessionId: string) => Promise<SessionMetadata | undefined>;
   private getBranchFn: (folder: string) => Promise<string | undefined>;
+  private expandAll: boolean;
 
   constructor(
     detector: ClaudeProcessDetector,
@@ -52,6 +53,19 @@ export class ProjectTreeProvider
     this.resolveWorktreeFn = resolveWorktreeFn;
     this.readSessionMetadataFn = readSessionMetadataFn;
     this.getBranchFn = getBranchFn;
+    this.expandAll = globalState.get<boolean>(EXPAND_ALL_KEY, true);
+  }
+
+  /** Whether projects (and their nested worktrees) render expanded by default. */
+  isExpandAll(): boolean {
+    return this.expandAll;
+  }
+
+  /** Set the default expansion state, persist it, and re-render the tree. */
+  async setExpandAll(expand: boolean): Promise<void> {
+    this.expandAll = expand;
+    await this.globalState.update(EXPAND_ALL_KEY, expand);
+    this.refresh();
   }
 
   setCurrentWindowKey(key: string | undefined): void {
@@ -332,16 +346,26 @@ export class ProjectTreeProvider
   }
 
   private getProjectTreeItem(element: WorkspaceWithStatus): vscode.TreeItem {
-    const collapsible =
-      element.sessionCount > 0 || element.worktrees.length > 0
-        ? vscode.TreeItemCollapsibleState.Collapsed
-        : vscode.TreeItemCollapsibleState.None;
+    const hasChildren = element.sessionCount > 0 || element.worktrees.length > 0;
+    const collapsible = !hasChildren
+      ? vscode.TreeItemCollapsibleState.None
+      : this.expandAll
+        ? vscode.TreeItemCollapsibleState.Expanded
+        : vscode.TreeItemCollapsibleState.Collapsed;
 
     const label = element.isCurrentWindow
       ? `${element.displayName} (this window)`
       : element.displayName;
 
     const item = new vscode.TreeItem(label, collapsible);
+
+    // Encode the expand state in the id so toggling Expand/Collapse All forces
+    // VS Code to treat the node as new and re-apply collapsibleState. The id stays
+    // stable across polling refreshes within a state, so manual expand/collapse
+    // of individual rows survives the periodic refresh.
+    if (hasChildren) {
+      item.id = `${element.entry.folder}:${this.expandAll ? "e" : "c"}`;
+    }
 
     const iconFile = this.getStatusIconFile(element.status, element.isCurrentWindow);
     item.iconPath = {

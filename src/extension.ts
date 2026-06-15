@@ -9,7 +9,7 @@ import { WorkspaceRegistry } from "./workspaceRegistry";
 import { ProjectTreeProvider } from "./projectTreeProvider";
 import { StatusBarManager } from "./statusBarManager";
 import { HookManager } from "./hookManager";
-import { CONFIG_SECTION, CPU_ACTIVE_THRESHOLD, CLAUDE_SESSIONS_DIR, HOOKS_POLLING_INTERVAL, VSCODE_WORKSPACES_DIR, FOCUS_REQUESTS_DIR } from "./constants";
+import { CONFIG_SECTION, CPU_ACTIVE_THRESHOLD, CLAUDE_SESSIONS_DIR, HOOKS_POLLING_INTERVAL, VSCODE_WORKSPACES_DIR, FOCUS_REQUESTS_DIR, EXPAND_ALL_CONTEXT } from "./constants";
 import { SessionItem, WorkspaceWithStatus } from "./types";
 import { buildWorkspaceRegistration } from "./workspaceIdentity";
 import { findTerminalForPid } from "./terminalLocator";
@@ -162,6 +162,9 @@ export async function activate(context: vscode.ExtensionContext) {
     dragAndDropController: treeProvider,
   });
 
+  // Seed the context key so the view title shows the correct expand/collapse icon
+  vscode.commands.executeCommand("setContext", EXPAND_ALL_CONTEXT, treeProvider.isExpandAll());
+
   // Auto-open the Claude Sessions sidebar so it's ready in every window
   setTimeout(() => {
     vscode.commands.executeCommand("claudeSessionsProjects.focus");
@@ -198,6 +201,16 @@ export async function activate(context: vscode.ExtensionContext) {
     vscode.commands.registerCommand("claudeSessions.refreshProjects", () => {
       treeProvider.refresh();
       updateBadge();
+    }),
+
+    vscode.commands.registerCommand("claudeSessions.expandAll", async () => {
+      await treeProvider.setExpandAll(true);
+      vscode.commands.executeCommand("setContext", EXPAND_ALL_CONTEXT, true);
+    }),
+
+    vscode.commands.registerCommand("claudeSessions.collapseAll", async () => {
+      await treeProvider.setExpandAll(false);
+      vscode.commands.executeCommand("setContext", EXPAND_ALL_CONTEXT, false);
     }),
 
     // Default click: switch to existing window or open new, repositioned in-place

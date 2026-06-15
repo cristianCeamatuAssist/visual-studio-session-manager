@@ -572,6 +572,73 @@ describe("ProjectTreeProvider", () => {
     });
   });
 
+  describe("expand-all default state", () => {
+    function makeActiveProject() {
+      mockRegistry.getActiveWorkspaces.mockResolvedValue([makeEntry({ folder: "/p", name: "p" })]);
+      const session = { pid: 7, sessionId: "abc", cwd: "/p", startedAt: Date.now(), kind: "cli", cpuPercent: 50 };
+      mockDetector.detectSessions.mockResolvedValue([session]);
+      mockDetector.getStatusForWorkspace.mockReturnValue({ status: ClaudeSessionStatus.Active, sessions: [session] });
+    }
+
+    it("renders projects with children expanded by default", async () => {
+      makeActiveProject();
+      const roots = await provider.getChildren();
+      const item = provider.getTreeItem(roots[0]);
+
+      expect(provider.isExpandAll()).toBe(true);
+      expect((item as vscode.TreeItem).collapsibleState).toBe(vscode.TreeItemCollapsibleState.Expanded);
+    });
+
+    it("renders childless projects as non-collapsible regardless of expand state", async () => {
+      mockRegistry.getActiveWorkspaces.mockResolvedValue([makeEntry({ folder: "/idle", name: "idle" })]);
+      mockDetector.getStatusForWorkspace.mockReturnValue({ status: ClaudeSessionStatus.Inactive, sessions: [] });
+
+      const roots = await provider.getChildren();
+      const item = provider.getTreeItem(roots[0]);
+
+      expect((item as vscode.TreeItem).collapsibleState).toBe(vscode.TreeItemCollapsibleState.None);
+    });
+
+    it("collapses projects once expand-all is turned off", async () => {
+      makeActiveProject();
+      await provider.setExpandAll(false);
+      const roots = await provider.getChildren();
+      const item = provider.getTreeItem(roots[0]);
+
+      expect(provider.isExpandAll()).toBe(false);
+      expect((item as vscode.TreeItem).collapsibleState).toBe(vscode.TreeItemCollapsibleState.Collapsed);
+    });
+
+    it("encodes the expand state in the tree item id so a toggle re-renders the node", async () => {
+      makeActiveProject();
+      const expandedId = (provider.getTreeItem((await provider.getChildren())[0]) as vscode.TreeItem).id;
+
+      await provider.setExpandAll(false);
+      const collapsedId = (provider.getTreeItem((await provider.getChildren())[0]) as vscode.TreeItem).id;
+
+      expect(expandedId).toBe("/p:e");
+      expect(collapsedId).toBe("/p:c");
+      expect(expandedId).not.toBe(collapsedId);
+    });
+
+    it("persists the expand-all preference to global state", async () => {
+      await provider.setExpandAll(false);
+      expect(mockGlobalState.get("expandAll")).toBe(false);
+
+      const reloaded = new ProjectTreeProvider(
+        mockDetector as never,
+        mockRegistry as never,
+        mockHookManager as never,
+        "/ext/path",
+        mockGlobalState as never,
+        mockResolveWorktree,
+        mockReadMetadata,
+        mockGetBranch
+      );
+      expect(reloaded.isExpandAll()).toBe(false);
+    });
+  });
+
   describe("session metadata rendering", () => {
     it("labels a session by its chat title and shows context %", async () => {
       mockRegistry.getActiveWorkspaces.mockResolvedValue([makeEntry({ folder: "/p", name: "p" })]);

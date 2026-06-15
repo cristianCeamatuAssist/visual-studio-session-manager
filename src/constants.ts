@@ -25,3 +25,9 @@ export const FOCUS_REQUESTS_DIR = path.join(VSCODE_WORKSPACES_DIR, "focus-reques
 
 /** Key used in VS Code globalState to persist user's custom project order */
 export const PROJECT_ORDER_KEY = "projectOrder";
+
+/** Key used in VS Code globalState to persist whether the tree expands all nodes by default */
+export const EXPAND_ALL_KEY = "expandAll";
+
+/** Context key toggled so the view title shows Expand-All vs Collapse-All */
+export const EXPAND_ALL_CONTEXT = "claudeSessions.expanded";

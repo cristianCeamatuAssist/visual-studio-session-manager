@@ -54,6 +54,16 @@
         "icon": "$(refresh)"
       },
       {
+        "command": "claudeSessions.expandAll",
+        "title": "Expand All",
+        "icon": "$(expand-all)"
+      },
+      {
+        "command": "claudeSessions.collapseAll",
+        "title": "Collapse All",
+        "icon": "$(collapse-all)"
+      },
+      {
         "command": "claudeSessions.openProject",
         "title": "Open Project"
       },
@@ -91,6 +101,16 @@
           "command": "claudeSessions.refreshProjects",
           "when": "view == claudeSessionsProjects",
           "group": "navigation@2"
+        },
+        {
+          "command": "claudeSessions.collapseAll",
+          "when": "view == claudeSessionsProjects && claudeSessions.expanded",
+          "group": "navigation@3"
+        },
+        {
+          "command": "claudeSessions.expandAll",
+          "when": "view == claudeSessionsProjects && !claudeSessions.expanded",
+          "group": "navigation@3"
         }
       ],
       "view/item/context": [
