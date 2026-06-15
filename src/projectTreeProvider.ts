@@ -5,7 +5,12 @@ import { WorkspaceRegistry } from "./workspaceRegistry";
 import { HookManager } from "./hookManager";
 import { ClaudeSessionStatus, WorkspaceWithStatus, SessionItem, TreeNode } from "./types";
 import { resolveWorktree, WorktreeInfo } from "./worktreeResolver";
+import { getGitBranch } from "./gitBranch";
+import { TranscriptReader } from "./transcriptReader";
+import { SessionMetadata } from "./sessionMetadata";
 import { CONFIG_SECTION, DEFAULT_POLLING_INTERVAL, PROJECT_ORDER_KEY } from "./constants";
+
+const sharedTranscriptReader = new TranscriptReader();
 
 export class ProjectTreeProvider
   implements vscode.TreeDataProvider<TreeNode>, vscode.TreeDragAndDropController<TreeNode>, vscode.Disposable {
@@ -25,6 +30,8 @@ export class ProjectTreeProvider
   private currentWindowKey: string | undefined;
   private resolveWorktreeFn: (folder: string) => Promise<WorktreeInfo>;
   private worktreeInfoCache = new Map<string, WorktreeInfo>();
+  private readSessionMetadataFn: (sessionId: string) => Promise<SessionMetadata | undefined>;
+  private getBranchFn: (folder: string) => Promise<string | undefined>;
 
   constructor(
     detector: ClaudeProcessDetector,
@@ -32,7 +39,10 @@ export class ProjectTreeProvider
     hookManager: HookManager,
     extensionPath: string,
     globalState: vscode.Memento,
-    resolveWorktreeFn: (folder: string) => Promise<WorktreeInfo> = resolveWorktree
+    resolveWorktreeFn: (folder: string) => Promise<WorktreeInfo> = resolveWorktree,
+    readSessionMetadataFn: (sessionId: string) => Promise<SessionMetadata | undefined> =
+      (sessionId) => sharedTranscriptReader.readSessionMetadata(sessionId),
+    getBranchFn: (folder: string) => Promise<string | undefined> = getGitBranch
   ) {
     this.detector = detector;
     this.registry = registry;
@@ -40,6 +50,8 @@ export class ProjectTreeProvider
     this.extensionPath = extensionPath;
     this.globalState = globalState;
     this.resolveWorktreeFn = resolveWorktreeFn;
+    this.readSessionMetadataFn = readSessionMetadataFn;
+    this.getBranchFn = getBranchFn;
   }
 
   setCurrentWindowKey(key: string | undefined): void {
@@ -107,6 +119,19 @@ export class ProjectTreeProvider
     }
 
     const sessions = await this.detector.detectSessions(this.hooksInstalled);
+
+    // Enrich sessions with transcript metadata (title, context %, git branch).
+    await Promise.all(
+      sessions.map(async (session) => {
+        const meta = await this.readSessionMetadataFn(session.sessionId);
+        if (meta) {
+          session.title = meta.title;
+          session.contextPercent = meta.contextPercent;
+          session.gitBranch = meta.gitBranch;
+        }
+      })
+    );
+
     const hookWaitingMarkers = await this.hookManager.getWaitingMarkers();
 
     // Clean up stale markers
@@ -133,9 +158,19 @@ export class ProjectTreeProvider
         sessionCount: matchingSessions.length,
         isCurrentWindow: normalizedCurrent === normalizedEntry,
         worktreeOf: undefined,
+        branch: undefined,
         worktrees: [],
       };
     });
+
+    // Branch shown on the project row: prefer a branch reported by its sessions,
+    // otherwise resolve it from git for idle projects.
+    await Promise.all(
+      workspacesWithStatus.map(async (project) => {
+        const fromSession = project.sessions.map((s) => s.gitBranch).find(Boolean);
+        project.branch = fromSession ?? (await this.getBranchFn(project.entry.folders[0]));
+      })
+    );
 
     const byFolder = new Map<string, WorkspaceWithStatus>();
     for (const project of workspacesWithStatus) {
@@ -314,10 +349,12 @@ export class ProjectTreeProvider
       dark: vscode.Uri.file(path.join(this.extensionPath, "resources", iconFile)),
     };
 
-    const baseDescription = this.getStatusDescription(element);
-    item.description = element.worktreeOf
-      ? `worktree · ${baseDescription}`
-      : baseDescription;
+    const statusDescription = this.getStatusDescription(element);
+    const descriptionParts: string[] = [];
+    if (element.worktreeOf) descriptionParts.push("worktree");
+    if (element.branch) descriptionParts.push(element.branch);
+    descriptionParts.push(statusDescription);
+    item.description = descriptionParts.join(" · ");
     item.tooltip = this.buildProjectTooltip(element);
     item.contextValue = "project";
 
@@ -336,7 +373,9 @@ export class ProjectTreeProvider
   private getSessionTreeItem(element: SessionItem): vscode.TreeItem {
     const { session } = element;
     const started = this.timeAgo(session.startedAt);
-    const label = `PID ${session.pid}`;
+    const label = session.title ?? `PID ${session.pid}`;
+    const ctxPrefix =
+      session.contextPercent !== undefined ? `${session.contextPercent}% · ` : "";
 
     const item = new vscode.TreeItem(label, vscode.TreeItemCollapsibleState.None);
 
@@ -349,14 +388,14 @@ export class ProjectTreeProvider
         [ClaudeSessionStatus.Inactive]: { icon: "circle-outline", color: "terminal.ansiBrightBlack", label: "Inactive" },
       };
       const cfg = statusConfig[parentStatus];
-      item.description = `${cfg.label} - ${started}`;
+      item.description = `${ctxPrefix}${cfg.label} - ${started}`;
       item.iconPath = new vscode.ThemeIcon(cfg.icon, new vscode.ThemeColor(cfg.color));
     } else {
       // CPU mode fallback
       const isActive = session.cpuPercent > 5;
       item.description = isActive
-        ? `Working (CPU: ${session.cpuPercent.toFixed(0)}%) - ${started}`
-        : `Needs input - ${started}`;
+        ? `${ctxPrefix}Working (CPU: ${session.cpuPercent.toFixed(0)}%) - ${started}`
+        : `${ctxPrefix}Needs input - ${started}`;
       item.iconPath = new vscode.ThemeIcon(
         isActive ? "pulse" : "bell",
         isActive
@@ -367,6 +406,11 @@ export class ProjectTreeProvider
 
     const md = new vscode.MarkdownString();
     md.appendMarkdown(`**Session** \`${session.sessionId.slice(0, 8)}...\`\n\n`);
+    if (session.title) md.appendMarkdown(`- **Title:** ${session.title}\n`);
+    if (session.contextPercent !== undefined) {
+      md.appendMarkdown(`- **Context:** ${session.contextPercent}%\n`);
+    }
+    if (session.gitBranch) md.appendMarkdown(`- **Branch:** ${session.gitBranch}\n`);
     md.appendMarkdown(`- **PID:** ${session.pid}\n`);
     md.appendMarkdown(`- **CWD:** \`${session.cwd}\`\n`);
     if (!this.hooksInstalled) {

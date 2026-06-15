@@ -12,6 +12,12 @@ export interface ClaudeSession {
   kind: string;
   entrypoint?: string;
   cpuPercent: number;
+  /** Chat title from the transcript (custom-title → ai-title → first prompt). */
+  title?: string;
+  /** Context-window usage percentage (0–100+), undefined when unknown. */
+  contextPercent?: number;
+  /** Git branch recorded in the transcript. */
+  gitBranch?: string;
 }
 
 export type WorkspaceKind = "folder" | "workspace";
@@ -47,6 +53,8 @@ export interface WorkspaceWithStatus {
   worktreeOf?: string;
   /** Worktree windows nested under this project in the tree. */
   worktrees: WorkspaceWithStatus[];
+  /** Git branch for this window (from its sessions, or resolved via git). */
+  branch?: string;
 }
 
 export interface SessionItem {

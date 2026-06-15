@@ -48,6 +48,14 @@ function createMockWorktreeResolver() {
   return vi.fn().mockResolvedValue({ isWorktree: false });
 }
 
+function createMockReadMetadata() {
+  return vi.fn().mockResolvedValue(undefined);
+}
+
+function createMockGetBranch() {
+  return vi.fn().mockResolvedValue(undefined);
+}
+
 describe("ProjectTreeProvider", () => {
   let provider: ProjectTreeProvider;
   let mockDetector: ReturnType<typeof createMockDetector>;
@@ -55,6 +63,8 @@ describe("ProjectTreeProvider", () => {
   let mockHookManager: ReturnType<typeof createMockHookManager>;
   let mockGlobalState: ReturnType<typeof createMockMemento>;
   let mockResolveWorktree: ReturnType<typeof createMockWorktreeResolver>;
+  let mockReadMetadata: ReturnType<typeof createMockReadMetadata>;
+  let mockGetBranch: ReturnType<typeof createMockGetBranch>;
 
   beforeEach(() => {
     vi.clearAllMocks();
@@ -63,13 +73,17 @@ describe("ProjectTreeProvider", () => {
     mockHookManager = createMockHookManager();
     mockGlobalState = createMockMemento();
     mockResolveWorktree = createMockWorktreeResolver();
+    mockReadMetadata = createMockReadMetadata();
+    mockGetBranch = createMockGetBranch();
     provider = new ProjectTreeProvider(
       mockDetector as never,
       mockRegistry as never,
       mockHookManager as never,
       "/ext/path",
       mockGlobalState as never,
-      mockResolveWorktree
+      mockResolveWorktree,
+      mockReadMetadata,
+      mockGetBranch
     );
   });
 
@@ -555,6 +569,65 @@ describe("ProjectTreeProvider", () => {
       const item = provider.getTreeItem(roots[0]);
 
       expect(String((item as vscode.TreeItem).description)).toContain("worktree");
+    });
+  });
+
+  describe("session metadata rendering", () => {
+    it("labels a session by its chat title and shows context %", async () => {
+      mockRegistry.getActiveWorkspaces.mockResolvedValue([makeEntry({ folder: "/p", name: "p" })]);
+      const session = { pid: 7, sessionId: "abc", cwd: "/p", startedAt: Date.now(), kind: "cli", cpuPercent: 50 };
+      mockDetector.detectSessions.mockResolvedValue([session]);
+      mockDetector.getStatusForWorkspace.mockReturnValue({ status: ClaudeSessionStatus.Active, sessions: [session] });
+      mockReadMetadata.mockResolvedValue({ title: "Fix voyager tests", contextPercent: 45, gitBranch: "feat/x" });
+
+      const roots = await provider.getChildren();
+      const children = await provider.getChildren(roots[0]);
+      const sessionNode = children.find((c) => c.type === "session")!;
+      const item = provider.getTreeItem(sessionNode);
+
+      expect((item as vscode.TreeItem).label).toBe("Fix voyager tests");
+      expect(String((item as vscode.TreeItem).description)).toContain("45% ·");
+    });
+
+    it("falls back to PID label when there is no title", async () => {
+      mockRegistry.getActiveWorkspaces.mockResolvedValue([makeEntry({ folder: "/p", name: "p" })]);
+      const session = { pid: 7, sessionId: "abc", cwd: "/p", startedAt: Date.now(), kind: "cli", cpuPercent: 50 };
+      mockDetector.detectSessions.mockResolvedValue([session]);
+      mockDetector.getStatusForWorkspace.mockReturnValue({ status: ClaudeSessionStatus.Active, sessions: [session] });
+      mockReadMetadata.mockResolvedValue(undefined);
+
+      const roots = await provider.getChildren();
+      const children = await provider.getChildren(roots[0]);
+      const item = provider.getTreeItem(children.find((c) => c.type === "session")!);
+
+      expect((item as vscode.TreeItem).label).toBe("PID 7");
+    });
+
+    it("shows the git branch on the project row from its sessions", async () => {
+      mockRegistry.getActiveWorkspaces.mockResolvedValue([makeEntry({ folder: "/p", name: "p" })]);
+      const session = { pid: 7, sessionId: "abc", cwd: "/p", startedAt: Date.now(), kind: "cli", cpuPercent: 1 };
+      mockDetector.detectSessions.mockResolvedValue([session]);
+      mockDetector.getStatusForWorkspace.mockReturnValue({ status: ClaudeSessionStatus.Active, sessions: [session] });
+      mockReadMetadata.mockResolvedValue({ gitBranch: "feat/voyager" });
+
+      const roots = await provider.getChildren();
+      const item = provider.getTreeItem(roots[0]);
+
+      expect(String((item as vscode.TreeItem).description)).toContain("feat/voyager");
+      expect(mockGetBranch).not.toHaveBeenCalled();
+    });
+
+    it("falls back to git for branch when the project has no sessions", async () => {
+      mockRegistry.getActiveWorkspaces.mockResolvedValue([makeEntry({ folder: "/idle", name: "idle" })]);
+      mockDetector.detectSessions.mockResolvedValue([]);
+      mockDetector.getStatusForWorkspace.mockReturnValue({ status: ClaudeSessionStatus.Inactive, sessions: [] });
+      mockGetBranch.mockResolvedValue("main");
+
+      const roots = await provider.getChildren();
+      const item = provider.getTreeItem(roots[0]);
+
+      expect(mockGetBranch).toHaveBeenCalledWith("/idle");
+      expect(String((item as vscode.TreeItem).description)).toContain("main");
     });
   });
 });
